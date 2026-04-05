@@ -4,6 +4,19 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+## Is This For You?
+
+This is **not** for casual OpenClaw users. If you send a few messages a day and never think about tokens, you don't need this.
+
+This is for you if:
+- Your sessions hit 100K+ tokens and you don't know why
+- You've been 429'd into a retry spiral that burned your monthly quota in an hour
+- You run subagents and they inherit 200K of context they don't need
+- You've stared at a compaction summary wondering what got lost
+- You've built crons, knowledge graphs, or multi-agent pipelines on OpenClaw and hit the ceiling
+
+If none of that sounds familiar, close this tab.
+
 ## Problem
 
 OpenClaw agents accumulate context linearly. Every tool result, file read, and exec output stays in the conversation until compaction runs — a blunt summarizer that replaces history with a lossy summary. There's no eviction policy, no priority scoring, and no circuit breaker on API retries.
@@ -13,7 +26,7 @@ This leads to:
 - 429 retry loops where each retry sends the full bloated context, burning quota faster
 - Subagents inheriting unnecessary context from the parent session
 
-We built ContextClaw to fix this in our own production setup (an agency running multi-agent workflows on OpenClaw). The problems are real — we accumulated 150M tokens in wasted context over one week.
+We built ContextClaw after burning 150M tokens in one week running multi-agent workflows through a single OpenClaw instance.
 
 ## What It Does
 
