@@ -11,6 +11,33 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
+import { WebSocketServer } from 'ws';
+
+let wss = null;
+const connectedClients = new Set();
+
+function initWebSocketServer() {
+  if (wss) return;
+  try {
+    wss = new WebSocketServer({ port: 41234 });
+    wss.on('connection', (ws) => {
+      connectedClients.add(ws);
+      ws.on('close', () => connectedClients.delete(ws));
+    });
+    console.log('[ContextClaw] WebSocket server listening on port 41234');
+  } catch (e) {
+    console.error('[ContextClaw] Failed to start WebSocket server:', e);
+  }
+}
+
+function broadcastTelemetry(data) {
+  const payload = JSON.stringify(data);
+  for (const client of connectedClients) {
+    if (client.readyState === 1) { // OPEN
+      client.send(payload);
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Token estimation (cl100k-style: ~4 chars per token)
@@ -95,6 +122,7 @@ class ContextClawEngine {
     };
     // Track per-session state
     this._sessions = new Map();
+    initWebSocketServer();
   }
 
   async bootstrap({ sessionId }) {
@@ -174,6 +202,16 @@ class ContextClawEngine {
     const addition = evictedMsgs.length > 0
       ? `[ContextClaw] ${evictedMsgs.length} older messages evicted to cold storage. ${keptTokens} tokens retained of ${totalTokens} original.`
       : undefined;
+
+    // Broadcast telemetry to Studio
+    broadcastTelemetry({
+      type: 'ASSEMBLE',
+      sessionId,
+      totalTokens,
+      keptTokens,
+      evictedCount: evictedMsgs.length,
+      budget: tokenBudget
+    });
 
     return {
       messages: kept,

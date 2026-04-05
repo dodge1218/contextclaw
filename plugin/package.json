@@ -4,6 +4,11 @@
   "type": "module",
   "main": "index.js",
   "openclaw": {
-    "extensions": ["./index.js"]
+    "extensions": [
+      "./index.js"
+    ]
+  },
+  "dependencies": {
+    "ws": "^8.20.0"
   }
 }
