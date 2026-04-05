@@ -1,1 +1,4 @@
-node_modules/\ndist/\n*.log
+node_modules/
+dist/
+.contextclaw-memory/
+*.tsbuildinfo
