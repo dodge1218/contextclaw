@@ -1,4 +1,28 @@
 import type { ContextBlock } from './types.js';
+import { get_encoding, type Tiktoken } from 'tiktoken';
+
+let _encoder: Tiktoken | null = null;
+function getEncoder(): Tiktoken | null {
+  if (_encoder) return _encoder;
+  try {
+    _encoder = get_encoding('cl100k_base');
+    return _encoder;
+  } catch {
+    return null;
+  }
+}
+
+export function countTokens(text: string): number {
+  const enc = getEncoder();
+  if (enc) {
+    try {
+      return enc.encode_ordinary(text).length;
+    } catch {
+      // fall through to estimate
+    }
+  }
+  return Math.ceil(text.length / 4);
+}
 
 export class ContextBudget {
   private maxTokens: number;

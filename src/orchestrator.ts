@@ -11,6 +11,7 @@ export class ContextClaw {
   readonly memory: MemoryStore;
   readonly circuitBreaker: CircuitBreaker;
   readonly subagents: SubagentLauncher;
+  private _ingestLock: Promise<void> = Promise.resolve();
 
   constructor(config: ContextClawConfig) {
     this.budget = new ContextBudget(config.maxContextTokens);
@@ -23,20 +24,31 @@ export class ContextClaw {
   /**
    * Add a new context block. If over budget, automatically evicts lowest-scored blocks.
    */
-  async ingest(block: Omit<ContextBlock, 'id' | 'createdAt' | 'lastReferencedAt' | 'score' | 'pinned'>): Promise<void> {
-    const fullBlock: ContextBlock = {
-      ...block,
-      id: crypto.randomUUID(),
-      createdAt: Date.now(),
-      lastReferencedAt: Date.now(),
-      score: this.scoreBlock(block),
-      pinned: block.type === 'system',
-    };
+  async ingest(block: Omit<ContextBlock, 'id' | 'createdAt' | 'lastReferencedAt' | 'score' | 'pinned' | 'evictable'>): Promise<void> {
+    let release: () => void;
+    const acquired = new Promise<void>(r => { release = r; });
+    const prev = this._ingestLock;
+    this._ingestLock = acquired;
+    await prev;
 
-    this.budget.add(fullBlock);
+    try {
+      const fullBlock: ContextBlock = {
+        ...block,
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+        lastReferencedAt: Date.now(),
+        score: this.scoreBlock(block),
+        pinned: block.type === 'system',
+        evictable: false,
+      };
 
-    if (this.budget.overBudget) {
-      await this.eviction.evictUntilBudget();
+      this.budget.add(fullBlock);
+
+      if (this.budget.overBudget) {
+        await this.eviction.evictUntilBudget();
+      }
+    } finally {
+      release!();
     }
   }
 

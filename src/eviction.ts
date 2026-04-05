@@ -19,7 +19,7 @@ export class EvictionEngine {
     const flushedPaths: string[] = [];
 
     while (this.budget.overBudget) {
-      const candidates = this.budget.getEvictionCandidates();
+      const candidates = this.getCandidates();
       if (candidates.length === 0) break;
 
       const victim = candidates[0];
@@ -49,5 +49,21 @@ export class EvictionEngine {
 
   getHistory() {
     return this.history;
+  }
+
+  private getCandidates(): ContextBlock[] {
+    switch (this.strategy) {
+      case 'fifo':
+        return this.budget.getAll()
+          .filter(b => !b.pinned)
+          .sort((a, b) => a.createdAt - b.createdAt);
+      case 'manual':
+        return this.budget.getAll()
+          .filter(b => !b.pinned && b.evictable)
+          .sort((a, b) => a.createdAt - b.createdAt);
+      case 'lru-scored':
+      default:
+        return this.budget.getEvictionCandidates();
+    }
   }
 }

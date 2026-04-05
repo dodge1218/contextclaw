@@ -4,7 +4,6 @@ export class CircuitBreaker {
   private config: CircuitBreakerConfig;
   private failureCount: Map<string, number> = new Map();
   private lastFailure: Map<string, number> = new Map();
-  private currentModelIndex = 0;
 
   constructor(config: CircuitBreakerConfig) {
     this.config = config;

@@ -30,6 +30,7 @@ export interface ContextBlock {
   lastReferencedAt: number;
   score: number; // 0-1, higher = more important
   pinned: boolean; // never evict
+  evictable: boolean; // for manual strategy: only evict if true
   source?: string; // tool name, file path, etc.
 }
 

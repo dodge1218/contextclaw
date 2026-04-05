@@ -13,25 +13,30 @@ export class MemoryStore {
     await mkdir(this.dir, { recursive: true });
   }
 
-  async flush(block: ContextBlock): Promise<string> {
-    await this.init();
-    const filename = `evicted-${block.id}-${Date.now()}.md`;
-    const path = join(this.dir, filename);
-    const content = [
-      `# Evicted Context Block`,
-      `- ID: ${block.id}`,
-      `- Type: ${block.type}`,
-      `- Source: ${block.source || 'unknown'}`,
-      `- Score: ${block.score}`,
-      `- Created: ${new Date(block.createdAt).toISOString()}`,
-      `- Evicted: ${new Date().toISOString()}`,
-      ``,
-      `## Content`,
-      block.content,
-    ].join('\n');
+  async flush(block: ContextBlock): Promise<string | null> {
+    try {
+      await this.init();
+      const filename = `evicted-${block.id}-${Date.now()}.md`;
+      const path = join(this.dir, filename);
+      const content = [
+        `# Evicted Context Block`,
+        `- ID: ${block.id}`,
+        `- Type: ${block.type}`,
+        `- Source: ${block.source || 'unknown'}`,
+        `- Score: ${block.score}`,
+        `- Created: ${new Date(block.createdAt).toISOString()}`,
+        `- Evicted: ${new Date().toISOString()}`,
+        ``,
+        `## Content`,
+        block.content,
+      ].join('\n');
 
-    await writeFile(path, content, 'utf-8');
-    return path;
+      await writeFile(path, content, 'utf-8');
+      return path;
+    } catch (err) {
+      console.error(`[ContextClaw] Failed to flush block ${block.id}:`, err);
+      return null;
+    }
   }
 
   async search(query: string, maxResults = 5): Promise<{ path: string; snippet: string; score: number }[]> {
