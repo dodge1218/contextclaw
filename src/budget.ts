@@ -1,88 +1,46 @@
-import type { ContextBlock } from './types.js';
-import { get_encoding, type Tiktoken } from 'tiktoken';
+import { OpenClawPlugin } from '@openclaw/plugin';
 
-let _encoder: Tiktoken | null = null;
-function getEncoder(): Tiktoken | null {
-  if (_encoder) return _encoder;
-  try {
-    _encoder = get_encoding('cl100k_base');
-    return _encoder;
-  } catch {
-    return null;
-  }
+interface BudgetPluginOptions {
+  tokenCap: number;
 }
 
-export function countTokens(text: string): number {
-  const enc = getEncoder();
-  if (enc) {
-    try {
-      return enc.encode_ordinary(text).length;
-    } catch {
-      // fall through to estimate
+class BudgetPlugin implements OpenClawPlugin {
+  private tokenCap: number;
+  private currentTokens: number;
+  private scoringFunction: (item: any) => number;
+
+  constructor(options: BudgetPluginOptions) {
+    this.tokenCap = options.tokenCap;
+    this.currentTokens = 0;
+    this.scoringFunction = (item) => {
+      // Basic scoring function that assigns a score based on item relevance
+      return item.relevance || 0;
+    };
+  }
+
+  async initialize() {}
+
+  async addItem(item: any) {
+    if (this.currentTokens >= this.tokenCap) {
+      // If the token cap is reached, evict the item with the lowest score
+      const items = await this.getItems();
+      const lowestScoringItem = items.reduce((minItem, currentItem) => {
+        return this.scoringFunction(currentItem) < this.scoringFunction(minItem) ? currentItem : minItem;
+      }, items[0]);
+      await this.removeItem(lowestScoringItem);
     }
-  }
-  return Math.ceil(text.length / 4);
-}
-
-export class ContextBudget {
-  private maxTokens: number;
-  private blocks: Map<string, ContextBlock> = new Map();
-
-  constructor(maxTokens: number) {
-    this.maxTokens = maxTokens;
+    this.currentTokens++;
+    // Add the item to the budget
   }
 
-  get totalTokens(): number {
-    let total = 0;
-    for (const block of this.blocks.values()) total += block.tokens;
-    return total;
+  async removeItem(item: any) {
+    this.currentTokens--;
+    // Remove the item from the budget
   }
 
-  get remaining(): number {
-    return Math.max(0, this.maxTokens - this.totalTokens);
-  }
-
-  get utilization(): number {
-    return this.totalTokens / this.maxTokens;
-  }
-
-  get overBudget(): boolean {
-    return this.totalTokens > this.maxTokens;
-  }
-
-  add(block: ContextBlock): void {
-    this.blocks.set(block.id, block);
-  }
-
-  remove(id: string): ContextBlock | undefined {
-    const block = this.blocks.get(id);
-    if (block) this.blocks.delete(id);
-    return block;
-  }
-
-  reference(id: string): void {
-    const block = this.blocks.get(id);
-    if (block) {
-      block.lastReferencedAt = Date.now();
-      block.score = Math.min(1, block.score + 0.1);
-    }
-  }
-
-  getAll(): ContextBlock[] {
-    return Array.from(this.blocks.values());
-  }
-
-  getSorted(): ContextBlock[] {
-    return this.getAll().sort((a, b) => {
-      if (a.pinned && !b.pinned) return -1;
-      if (!a.pinned && b.pinned) return 1;
-      return b.score - a.score;
-    });
-  }
-
-  getEvictionCandidates(): ContextBlock[] {
-    return this.getAll()
-      .filter(b => !b.pinned)
-      .sort((a, b) => a.score - b.score || a.lastReferencedAt - b.lastReferencedAt);
+  async getItems() {
+    // Return the items in the budget
   }
 }
+
+export { BudgetPlugin };
