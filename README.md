@@ -1,22 +1,23 @@
-# 🧠 ContextClaw
+# ContextClaw
 
-**Stop burning 90% of your tokens. Context orchestration for OpenClaw agents.**
+**Context orchestration for OpenClaw agents.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
----
+## Problem
 
-## The Problem
+OpenClaw agents accumulate context linearly. Every tool result, file read, and exec output stays in the conversation until compaction runs — a blunt summarizer that replaces history with a lossy summary. There's no eviction policy, no priority scoring, and no circuit breaker on API retries.
 
-Your OpenClaw agent sends 200K tokens per turn when it only needs 30K.
+This leads to:
+- Sessions that start at 30K tokens and reach 200K+ within a few turns
+- 429 retry loops where each retry sends the full bloated context, burning quota faster
+- Subagents inheriting unnecessary context from the parent session
 
-Every tool result, every file read, every exec output stays in the conversation forever — until the blunt compaction summarizer crushes it into a lossy summary. Meanwhile, your API bills explode and 429 rate limits cascade into retry spirals that burn thousands of dollars.
+We built ContextClaw to fix this in our own production setup (an agency running multi-agent workflows on OpenClaw). The problems are real — we accumulated 150M tokens in wasted context over one week.
 
-**We know because we burned 150M tokens learning this the hard way.**
+## What It Does
 
-## What ContextClaw Does
-
-ContextClaw sits between your OpenClaw agent and the LLM, managing what goes in and what stays out — like a packet router for context windows.
+ContextClaw manages what goes into an agent's context window and what gets evicted to searchable persistent memory.
 
 ```
 ┌─────────────┐     ┌──────────────┐     ┌─────────┐
@@ -27,129 +28,117 @@ ContextClaw sits between your OpenClaw agent and the LLM, managing what goes in 
                     ┌──────┴──────┐
                     │  Memory     │
                     │  Store      │
-                    │  (searchable)│
                     └─────────────┘
 ```
 
-### Features
+### Core Features
 
-| Feature | What it does |
-|---|---|
-| **Context Budget** | Set a token ceiling per session. ContextClaw enforces it by evicting stale context, not truncating. |
-| **Rolling Priority** | Every context block has a relevance score. Referenced = stays. Stale = evicted to searchable memory. |
-| **Subagent Isolation** | Spawn workers with surgical context — only the files and instructions they need. No 200K startup tax. |
-| **Retry Circuit Breaker** | On 429, stop after N attempts. Switch provider. Never spiral. |
-| **Pre-Compaction Flush** | Before OpenClaw's summarizer runs, flush decisions and outcomes to persistent memory files. |
-| **Visual Inspector** | Web UI to see exactly what's in your context window, drag to keep/evict, and track token spend over time. |
+- **Context Budget** — Enforce a token ceiling. When exceeded, the lowest-scored blocks are evicted (not truncated).
+- **LRU-Scored Eviction** — Each context block has a relevance score. User messages score high; large tool outputs score low. Referenced blocks get promoted. Stale blocks get evicted to persistent memory.
+- **Retry Circuit Breaker** — On 429, stop after N attempts and switch to a fallback model. Prevents retry spirals.
+- **Subagent Isolation** — Spawn workers with only the files and instructions they need. Enforces a 2K-token task description limit.
+- **Pre-Eviction Flush** — Valuable evicted blocks are written to disk as searchable markdown files.
 
-## Quick Start
+## Install
 
 ```bash
 npm install contextclaw
 ```
 
+## Usage
+
 ```typescript
-// openclaw.config.ts or your agent setup
 import { ContextClaw } from 'contextclaw';
 
 const claw = new ContextClaw({
-  maxContextTokens: 60_000,      // hard ceiling
-  evictionStrategy: 'lru-scored', // least-recently-referenced, weighted by importance
-  memoryStore: './memory',        // where evicted context goes (searchable)
+  maxContextTokens: 60_000,
+  evictionStrategy: 'lru-scored',
+  memoryStore: './memory',
   retryCircuitBreaker: {
-    maxRetries: 2,                // stop after 2 failures
-    fallbackModels: [             // auto-switch on 429
+    maxRetries: 2,
+    cooldownMs: 60_000,
+    fallbackModels: [
       'groq/llama-3.3-70b-versatile',
       'cerebras/llama-3.3-70b',
     ],
   },
   subagentDefaults: {
-    maxContextTokens: 30_000,     // subagents get less
-    injectOnly: ['task', 'files'], // no history, no memory, just the job
+    maxContextTokens: 30_000,
+    injectOnly: ['task', 'files'],
+    raiseHandAfter: 2,
   },
 });
 ```
 
-### Subagent Spawning
+### Ingesting Context
 
 ```typescript
-// Instead of dumping everything into a subagent:
-claw.spawn({
+await claw.ingest({
+  type: 'tool-result',
+  content: execOutput,
+  tokens: 5000,
+  source: 'exec:git-log',
+});
+// If over budget, lowest-scored blocks are automatically evicted
+```
+
+### Spawning Subagents
+
+```typescript
+const prompt = claw.subagents.buildTaskPrompt({
   role: 'coder',
   task: 'Add sitemap.ts to the Next.js app at /workspace/mysite/',
   files: ['/workspace/mysite/package.json', '/workspace/mysite/src/app/'],
   exitCriteria: 'sitemap.ts exists and npm run build passes',
-  raiseHand: true, // if stuck after 2 attempts, report back instead of retrying
+  raiseHand: true,
 });
+// Returns a scoped prompt under 2K tokens with raise-hand instructions
 ```
 
-### Visual Inspector
+### Circuit Breaker
 
-```bash
-npx contextclaw inspect
-# Opens http://localhost:3333 — see your context window as draggable blocks
+```typescript
+claw.circuitBreaker.recordFailure('claude-opus-4.6', 429);
+const next = claw.circuitBreaker.getNextModel('claude-opus-4.6');
+// Returns 'groq/llama-3.3-70b-versatile' after max retries exhausted
 ```
 
-## Why This Exists
+### Inspecting State
 
-We run an AI-powered agency (DreamSiteBuilders.com) on OpenClaw. We spawned 39 subagents, ran 16 crons, built knowledge graphs, and automated outreach — all through a single OpenClaw instance.
-
-Then we burned 150 million tokens in a week.
-
-The root cause: OpenClaw's context window is a FIFO queue with a blunt summarizer. There's no eviction policy, no priority scoring, no circuit breaker on retries. Every tool result from 50 turns ago sits in context burning tokens until compaction crushes everything into a lossy summary.
-
-ContextClaw is the fix we built for ourselves. Now it's yours.
+```typescript
+const state = claw.inspect();
+// { blocks, totalTokens, budgetTokens, utilizationPercent, evictionHistory }
+```
 
 ## Architecture
 
 ```
-contextclaw/
-├── src/
-│   ├── index.ts           # Main orchestrator
-│   ├── budget.ts          # Token counting and ceiling enforcement
-│   ├── eviction.ts        # LRU-scored eviction strategy
-│   ├── memory.ts          # Persistent memory store (search + retrieve)
-│   ├── circuit-breaker.ts # 429 retry prevention + model fallback
-│   ├── subagent.ts        # Isolated subagent launcher
-│   ├── inspector/         # Web UI for visual context inspection
-│   │   ├── server.ts
-│   │   └── ui/            # React dashboard
-│   └── hooks/             # OpenClaw hook integration
-│       ├── pre-compaction.ts
-│       └── post-turn.ts
-├── package.json
-├── tsconfig.json
-├── LICENSE
-└── README.md
+src/
+├── index.ts           # Exports
+├── types.ts           # All type definitions
+├── orchestrator.ts    # Main ContextClaw class
+├── budget.ts          # Token counting and ceiling enforcement
+├── eviction.ts        # LRU-scored eviction engine
+├── memory.ts          # Persistent memory store (flush + search)
+├── circuit-breaker.ts # 429 retry prevention + model fallback
+└── subagent.ts        # Subagent task builder + validator
 ```
 
 ## Roadmap
 
 - [x] Context budget enforcement
-- [x] LRU-scored eviction
-- [x] Retry circuit breaker
-- [x] Subagent isolation
+- [x] LRU-scored eviction with memory flush
+- [x] Retry circuit breaker with model fallback
+- [x] Subagent isolation with task validation
 - [ ] Visual inspector (web UI)
-- [ ] OpenClaw hook integration (pre-compaction flush)
-- [ ] Metrics dashboard (token spend over time)
-- [ ] Plugin for OpenClaw marketplace (ClawHub)
-
-## Built With
-
-- TypeScript
-- OpenClaw SDK
-- tiktoken (token counting)
-- Fuse.js (memory search)
-- React (inspector UI)
+- [ ] OpenClaw hook integration
+- [ ] Token counting via tiktoken (currently using estimates)
+- [ ] Embedding-based memory search (currently keyword)
 
 ## Contributing
 
-PRs welcome. If you've burned tokens on context bloat, you understand the problem. See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
 MIT
-
----
-
-*Built by [DreamSiteBuilders](https://dreamsitebuilders.com) — the agency that burned 150M tokens so you don't have to.*

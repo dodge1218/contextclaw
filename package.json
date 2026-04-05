@@ -28,7 +28,7 @@
     "url": "https://github.com/dodge1218/contextclaw"
   },
   "dependencies": {
-    "tiktoken": "^2.0.0",
+    "tiktoken": "^1.0.22",
     "fuse.js": "^7.0.0",
     "express": "^4.18.0"
   },
