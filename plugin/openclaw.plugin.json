@@ -1,0 +1,28 @@
+{
+  "id": "contextclaw",
+  "name": "ContextClaw",
+  "description": "Smart context engine that evicts bloat, flushes to cold storage, and keeps sessions lean",
+  "version": "0.1.0",
+  "kind": "context-engine",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "coldStorageDir": {
+        "type": "string",
+        "description": "Directory for evicted context cold storage",
+        "default": "~/.openclaw/workspace/memory/cold"
+      },
+      "evictionThreshold": {
+        "type": "number",
+        "description": "Fraction of token budget that triggers eviction (0-1)",
+        "default": 0.9
+      },
+      "keepRecentTurns": {
+        "type": "integer",
+        "description": "Minimum recent assistant turns to always keep",
+        "default": 5
+      }
+    },
+    "additionalProperties": false
+  }
+}
