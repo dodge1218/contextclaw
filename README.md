@@ -60,12 +60,21 @@ AUTOMATIONS
 
 Every oversized request that triggers a 429 wastes provider GPU compute — inference begins before rejection. ContextClaw reduces request sizes by ~85%, meaning fewer retries, less wasted infrastructure, and more users served on the same hardware.
 
-## Roadmap
+## Integrations & Adapters
 
-- [ ] Content-addressable context (hash-based dedup for LLM payloads)
-- [ ] Visual context monitor (real-time token budget dashboard)
-- [ ] Dynamic budgets per task type
-- [ ] Context replay (scrub past sessions to find bloat)
+ContextClaw's core token budget engine and WebSocket visualizer are framework-agnostic, though the current implementation is bundled as an OpenClaw plugin. 
+
+We are actively looking for open-source contributors to maintain adapters for other popular frameworks:
+
+| Framework | Status | Link / Maintainer |
+|---|---|---|
+| **OpenClaw** | ✅ Official | @dodge1218 |
+| **Cline** | 🟡 Seeking Maintainer | [Open an issue] |
+| **LangChain** | 🟡 Seeking Maintainer | [Open an issue] |
+| **CrewAI** | 🟡 Seeking Maintainer | [Open an issue] |
+| **AutoGen** | 🟡 Seeking Maintainer | [Open an issue] |
+
+If you hit 429 rate limits in your framework of choice, drop a PR with an adapter!
 
 ## License
 
