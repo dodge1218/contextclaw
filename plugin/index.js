@@ -171,8 +171,8 @@ function flushToCold(sessionId, messages) {
     tokens: messageTokens(m),
     // Truncate to save disk — full content isn't needed for recall
     content: typeof m.content === 'string'
-      ? m.content.slice(0, 2000)
-      : JSON.stringify(m.content).slice(0, 2000),
+      ? (m.content || '').slice(0, 2000)
+      : JSON.stringify(m.content || '').slice(0, 2000),
   }));
   writeFileSync(file, lines.join('\n') + '\n');
 }
