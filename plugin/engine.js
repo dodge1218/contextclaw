@@ -262,9 +262,12 @@ class ContextClawEngine {
 
     const totalTokens = scored.reduce((s, m) => s + m.tokens, 0);
 
-    // Step 3: Evict lowest-scored until under target
+    // Step 3: Protect last 3 turn pairs (6 messages) — never evict these
+    const PROTECTED_TURNS = 6; // 3 user + 3 assistant
+    const protectedStart = Math.max(0, messages.length - PROTECTED_TURNS);
+    
     const evictCandidates = [...scored]
-      .filter(s => s.score < 999)
+      .filter(s => s.score < 999 && s.index < protectedStart) // skip system AND recent turns
       .sort((a, b) => a.score - b.score);
 
     const evicted = new Set();
