@@ -13,6 +13,10 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { WebSocketServer } from 'ws';
+import { encoding_for_model } from 'tiktoken';
+
+// Reuse a single encoder instance (cl100k_base covers GPT-4/Claude-class models)
+const enc = encoding_for_model('gpt-4');
 
 // ---------------------------------------------------------------------------
 // Lifetime stats — track total tokens saved
@@ -25,7 +29,7 @@ const stats = {
 };
 
 const COLD_DIR = join(homedir(), '.openclaw', 'workspace', 'memory', 'cold');
-const TARGET_RATIO = 0.35;   // keep context at 35% of budget — our token estimates are ~2x under real count
+const TARGET_RATIO = 0.60;   // keep context at 60% of budget — real tokenizer now, no guesswork
 const WS_PORT = 41234;
 
 // ---------------------------------------------------------------------------
@@ -35,9 +39,12 @@ const WS_PORT = 41234;
 function countTokens(text) {
   if (!text) return 0;
   if (typeof text !== 'string') text = JSON.stringify(text);
-  // Real-world measurement: char/4 underestimates by ~2x.
-  // Use char/2 to stay conservative and actually trigger eviction.
-  return Math.ceil(text.length / 2);
+  try {
+    return enc.encode(text).length;
+  } catch (_) {
+    // Fallback: ~5.5 chars/token for English text (measured)
+    return Math.ceil(text.length / 5);
+  }
 }
 
 function messageTokens(msg) {
@@ -207,7 +214,7 @@ class ContextClawEngine {
       id: 'contextclaw',
       name: 'ContextClaw',
       version: '0.2.0',
-      ownsCompaction: false,
+      ownsCompaction: true,
     };
     this._sessions = new Map();
     initWs();
@@ -245,8 +252,6 @@ class ContextClawEngine {
     if (!tokenBudget) tokenBudget = 55000;
     const target = tokenBudget * TARGET_RATIO;
 
-    console.log(`[ContextClaw] assemble called: ${messages.length} msgs, budget=${tokenBudget}, target=${target}, estimated=${totalTokens}`);
-
     stats.totalAssembleCalls++;
 
     // Step 1: What is the user talking about right now?
@@ -261,6 +266,8 @@ class ContextClawEngine {
     }));
 
     const totalTokens = scored.reduce((s, m) => s + m.tokens, 0);
+
+    console.log(`[ContextClaw] assemble: ${messages.length} msgs, ${totalTokens} tokens (real), budget=${tokenBudget}, target=${target}`);
 
     // Step 3: Protect last 3 turn pairs (6 messages) — never evict these
     const PROTECTED_TURNS = 6; // 3 user + 3 assistant

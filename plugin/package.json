@@ -9,6 +9,7 @@
     ]
   },
   "dependencies": {
+    "tiktoken": "^1.0.22",
     "ws": "^8.20.0"
   }
 }
