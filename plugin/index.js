@@ -235,6 +235,8 @@ class ContextClawEngine {
     if (!tokenBudget) tokenBudget = 55000;
     const target = tokenBudget * TARGET_RATIO;
 
+    console.log(`[ContextClaw] assemble called: ${messages.length} msgs, budget=${tokenBudget}, target=${target}`);
+
     // Step 1: What is the user talking about right now?
     const topicKeywords = getTopicKeywords(messages);
 
