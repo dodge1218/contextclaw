@@ -163,7 +163,8 @@ function flushToCold(sessionId, messages) {
   if (!messages.length) return;
   mkdirSync(COLD_DIR, { recursive: true });
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  const file = join(COLD_DIR, `${sessionId.slice(0, 8)}-${ts}.jsonl`);
+  const sid = (sessionId || 'unknown').slice(0, 8);
+  const file = join(COLD_DIR, `${sid}-${ts}.jsonl`);
   const lines = messages.map(m => JSON.stringify({
     role: m.role,
     timestamp: m.timestamp || new Date().toISOString(),
