@@ -1,26 +1,51 @@
 # 🧠 ContextClaw
 
-Context budget engine for [OpenClaw](https://github.com/openclaw/openclaw). Treats your context window like RAM, not a logbook.
+**Stop sending Dockerfiles to the LLM 30 turns after you read them.**
 
-## The problem
+Context management plugin for [OpenClaw](https://github.com/openclaw/openclaw). Classifies every item in your context window by content type and applies retention policies. Files get truncated. Command output gets tailed. Your actual conversation stays intact.
 
-AI agents silently accumulate garbage in their context window — old tool outputs, stale chat logs, compaction artifacts. You don't notice until you're rate-limited or paying for 200K token requests that should be 22K.
+## The Problem
 
-| | Without ContextClaw | With ContextClaw |
-|---|---|---|
-| Tokens/turn | 195,000 | 22,000 |
-| Cache reads (52 turns) | 6.3M | ~760K |
+A typical 50-turn agent session accumulates:
 
-## How it works
+| Source | Tokens | After ContextClaw |
+|--------|--------|-------------------|
+| 10 file reads | ~50,000 | ~3,000 |
+| 15 command outputs | ~25,000 | ~2,000 |
+| 5 config dumps | ~8,000 | ~500 |
+| 4 error traces | ~6,000 | ~400 |
+| 30 metadata envelopes | ~9,000 | 0 |
+| **Total** | **~98,000** | **~5,900 (94% reduction)** |
 
-Every turn, before the API call:
+Your user messages and conversation? ~8,000 tokens. That was never the problem.
 
-1. **Extract topic** from last 3 user messages
-2. **Score** every message: topic relevance + recency + role − size penalty
-3. **Evict** lowest-scored items to cold storage on disk
-4. **Target** 60% of budget — always leaves headroom
+## How It Works
 
-System messages are never evicted. Recent turns are preserved. Old tool outputs with zero topic overlap get flushed first.
+```
+message arrives → classify type → check turn age → apply policy → assemble
+```
+
+### Content Types & Policies
+
+| Type | Tag | Policy |
+|------|-----|--------|
+| System prompt | 🟣 | Never touch |
+| User message | 🔵 | Keep last 5 verbatim, strip older metadata |
+| Assistant reply | 🟢 | Keep last 3, trim older |
+| File read | 🟠 | Full for 1 turn, then first+last 100 chars |
+| Command output | 🟠 | Full for 1 turn, then last 20 lines |
+| Image/media | 🔴 | Pointer only ("screenshot.jpg"), drop binary |
+| Config dump | 🔴 | Full for 1 turn, then key fields only |
+| Error trace | 🟡 | Keep 2 turns, then error line only |
+| JSON/schema blob | 🔴 | Full for 1 turn, then truncate to 500 chars |
+
+### What It Doesn't Do
+
+- No relevance scoring (wrong problem — bulk content types are the waste, not message relevance)
+- No embeddings (overkill for type-based truncation)
+- No model calls (zero latency, zero cost)
+- No summarization (pure pattern matching + truncation)
+- Doesn't fight native compaction (`ownsCompaction: false`)
 
 ## Install
 
@@ -30,51 +55,61 @@ git clone https://github.com/dodge1218/contextclaw.git
 cd contextclaw/plugin && npm install
 ```
 
-Add to `openclaw.json`:
+Add to `openclaw.yaml`:
 
-```json
-{
-  "plugins": {
-    "load": { "paths": ["~/.openclaw/plugins/contextclaw/plugin"] },
-    "slots": { "contextEngine": "contextclaw" },
-    "entries": { "contextclaw": { "enabled": true } }
-  }
-}
+```yaml
+plugins:
+  load:
+    paths:
+      - ~/.openclaw/plugins/contextclaw/plugin
+  slots:
+    contextEngine: contextclaw
+  entries:
+    contextclaw:
+      enabled: true
+      config:
+        coldStorageDir: ~/.openclaw/workspace/memory/cold
+        wsPort: 41234
+        enableTelemetry: true
 ```
 
 Restart OpenClaw.
 
-## Studio (optional)
+## Configuration
 
-ContextClaw broadcasts telemetry via WebSocket (port 41234). The `studio/` directory contains a React dashboard that shows real-time token usage, eviction events, and topic keywords.
+Override per-type policies:
 
-```bash
-cd studio && npm install && npm run dev
+```yaml
+contextclaw:
+  config:
+    policies:
+      tool-file-read:
+        keepTurns: 2          # keep files for 2 turns instead of 1
+        maxCharsAfter: 500    # bigger bookends
+      tool-cmd-output:
+        tailLines: 30         # keep last 30 lines instead of 20
 ```
 
 ## Architecture
 
 ```
-User prompt → OpenClaw gateway → ContextClaw.assemble()
-                                    ├── extract topic keywords
-                                    ├── score all messages
-                                    ├── evict low-relevance → cold storage
-                                    └── return pruned messages → API call
+plugin/
+├── classifier.js     # Content type detection (pattern matching)
+├── policy.js         # Per-type retention rules + truncation extractors
+├── index.js          # Engine: classify → policy → assemble
+└── __tests__/        # 36 tests
 ```
 
-Cold storage lives at `~/.openclaw/workspace/memory/cold/` as `.jsonl` files. Content is truncated to 2K chars per message — enough for recall, not enough to bloat disk.
+**675 lines of source. 373 lines of tests. Zero dependencies beyond `ws`.**
 
-## Integrations
+Cold storage lives at `~/.openclaw/workspace/memory/cold/` as `.jsonl` files — truncated content with metadata for potential rehydration.
 
-| Framework | Status | Maintainer |
-|---|---|---|
-| **OpenClaw** | ✅ Official | [@dodge1218](https://github.com/dodge1218) |
-| **Cline** | 🟡 Seeking maintainer | [Open an issue](https://github.com/dodge1218/contextclaw/issues) |
-| **LangChain** | 🟡 Seeking maintainer | [Open an issue](https://github.com/dodge1218/contextclaw/issues) |
-| **CrewAI** | 🟡 Seeking maintainer | [Open an issue](https://github.com/dodge1218/contextclaw/issues) |
-| **AutoGen** | 🟡 Seeking maintainer | [Open an issue](https://github.com/dodge1218/contextclaw/issues) |
+## Roadmap
 
-The core scoring logic is framework-agnostic (~100 lines). Adapters welcome.
+- **v2:** Task/project stickers — tag context by project+task, load only relevant history
+- **v2:** Intent extractor as standalone plugin
+- **v2:** Auto-rehydration from cold storage
+- **v3:** Cross-framework `@contextclaw/core` extraction
 
 ## License
 
