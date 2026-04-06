@@ -29,7 +29,9 @@ const WS_PORT = 41234;
 function countTokens(text) {
   if (!text) return 0;
   if (typeof text !== 'string') text = JSON.stringify(text);
-  return Math.ceil(text.length / 4);
+  // Real-world measurement: char/4 underestimates by ~2x.
+  // Use char/2 to stay conservative and actually trigger eviction.
+  return Math.ceil(text.length / 2);
 }
 
 function messageTokens(msg) {
