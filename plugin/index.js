@@ -19,7 +19,7 @@ import { WebSocketServer } from 'ws';
 // ---------------------------------------------------------------------------
 
 const COLD_DIR = join(homedir(), '.openclaw', 'workspace', 'memory', 'cold');
-const TARGET_RATIO = 0.6;    // keep context at 60% of budget
+const TARGET_RATIO = 0.35;   // keep context at 35% of budget — our token estimates are ~2x under real count
 const WS_PORT = 41234;
 
 // ---------------------------------------------------------------------------
