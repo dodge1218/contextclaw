@@ -312,11 +312,12 @@ class ContextClawEngine {
       lifetimeAssembles: stats.totalAssembleCalls,
     });
 
-    s.evictions += evictedMsgs.length;
+    const sess = this._sessions.get(sessionId) || { turns: 0, evictions: 0 };
+    sess.evictions += evictedMsgs.length;
     const tokensSaved = totalTokens - keptTokens;
     stats.totalEvicted += evictedMsgs.length;
     stats.totalTokensSaved += tokensSaved;
-    this._sessions.set(sessionId, s);
+    this._sessions.set(sessionId, sess);
 
     if (evictedMsgs.length > 0) {
       console.log(`[ContextClaw] evicted ${evictedMsgs.length} msgs, saved ${tokensSaved} tokens this turn | lifetime: ${stats.totalTokensSaved} tokens saved across ${stats.totalAssembleCalls} turns`);
