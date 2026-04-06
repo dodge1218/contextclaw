@@ -1,86 +1,81 @@
-# ContextClaw
+# 🧠 ContextClaw
 
-**Your AI agent's context budget.**
+Context budget engine for [OpenClaw](https://github.com/openclaw/openclaw). Treats your context window like RAM, not a logbook.
 
-ContextClaw monitors your AI agent's context window and automatically removes what doesn't matter — so your agent is faster, cheaper, and smarter.
+## The problem
 
-## The Problem
+AI agents silently accumulate garbage in their context window — old tool outputs, stale chat logs, compaction artifacts. You don't notice until you're rate-limited or paying for 200K token requests that should be 22K.
 
-AI agents silently waste tokens. In a real OpenClaw session, we measured:
-
-| Metric | Without ContextClaw | With ContextClaw |
+| | Without ContextClaw | With ContextClaw |
 |---|---|---|
-| Tokens per turn | 195,000 | 22,000–24,000 |
+| Tokens/turn | 195,000 | 22,000 |
 | Cache reads (52 turns) | 6.3M | ~760K |
-| Waste multiplier | **8–9x** | **1x (baseline)** |
 
-Root causes: full conversation history re-sent every request, compaction summaries persisting across "fresh" sessions, and 429 retry loops re-sending the same oversized payload.
+## How it works
 
-## How It Works
+Every turn, before the API call:
 
-ContextClaw treats your context window like RAM, not a logbook.
+1. **Extract topic** from last 3 user messages
+2. **Score** every message: topic relevance + recency + role − size penalty
+3. **Evict** lowest-scored items to cold storage on disk
+4. **Target** 60% of budget — always leaves headroom
 
-1. **Budget** — Sets a hard token cap per session (default 60K)
-2. **Score** — Rates each context item by relevance to the current task
-3. **Evict** — Removes lowest-scoring items before they hit the API
-
-That's it. Three operations, one primitive: the budget.
+System messages are never evicted. Recent turns are preserved. Old tool outputs with zero topic overlap get flushed first.
 
 ## Install
 
 ```bash
-# From your OpenClaw workspace
 cd ~/.openclaw/plugins
 git clone https://github.com/dodge1218/contextclaw.git
+cd contextclaw/plugin && npm install
 ```
 
-Add to your OpenClaw config:
-```yaml
-plugins:
-  - contextclaw
+Add to `openclaw.json`:
+
+```json
+{
+  "plugins": {
+    "load": { "paths": ["~/.openclaw/plugins/contextclaw/plugin"] },
+    "slots": { "contextEngine": "contextclaw" },
+    "entries": { "contextclaw": { "enabled": true } }
+  }
+}
 ```
 
-Restart OpenClaw. No other configuration needed.
+Restart OpenClaw.
+
+## Studio (optional)
+
+ContextClaw broadcasts telemetry via WebSocket (port 41234). The `studio/` directory contains a React dashboard that shows real-time token usage, eviction events, and topic keywords.
+
+```bash
+cd studio && npm install && npm run dev
+```
 
 ## Architecture
 
 ```
-THE BUDGET (core primitive)
-  └── Every token has a cost, a source, and a relevance score
-  └── Every session has a finite budget
-
-AUTOMATIONS
-  ├── Eviction: auto-remove lowest-relevance items when budget full
-  ├── Progressive Loading: skills/tools load only when needed
-  ├── Compaction: summarize old turns to reclaim budget
-  └── Circuit Breaker: hard-truncate if compaction fails
+User prompt → OpenClaw gateway → ContextClaw.assemble()
+                                    ├── extract topic keywords
+                                    ├── score all messages
+                                    ├── evict low-relevance → cold storage
+                                    └── return pruned messages → API call
 ```
 
-## Why This Matters for Providers
+Cold storage lives at `~/.openclaw/workspace/memory/cold/` as `.jsonl` files. Content is truncated to 2K chars per message — enough for recall, not enough to bloat disk.
 
-Every oversized request that triggers a 429 wastes provider GPU compute — inference begins before rejection. ContextClaw reduces request sizes by ~85%, meaning fewer retries, less wasted infrastructure, and more users served on the same hardware.
+## Integrations
 
-## Integrations & Adapters
-
-ContextClaw's core token budget engine and WebSocket visualizer are framework-agnostic, though the current implementation is bundled as an OpenClaw plugin. 
-
-We are actively looking for open-source contributors to maintain adapters for other popular frameworks:
-
-| Framework | Status | Link / Maintainer |
+| Framework | Status | Maintainer |
 |---|---|---|
-| **OpenClaw** | ✅ Official | @dodge1218 |
-| **Cline** | 🟡 Seeking Maintainer | [Open an issue] |
-| **LangChain** | 🟡 Seeking Maintainer | [Open an issue] |
-| **CrewAI** | 🟡 Seeking Maintainer | [Open an issue] |
-| **AutoGen** | 🟡 Seeking Maintainer | [Open an issue] |
+| **OpenClaw** | ✅ Official | [@dodge1218](https://github.com/dodge1218) |
+| **Cline** | 🟡 Seeking maintainer | [Open an issue](https://github.com/dodge1218/contextclaw/issues) |
+| **LangChain** | 🟡 Seeking maintainer | [Open an issue](https://github.com/dodge1218/contextclaw/issues) |
+| **CrewAI** | 🟡 Seeking maintainer | [Open an issue](https://github.com/dodge1218/contextclaw/issues) |
+| **AutoGen** | 🟡 Seeking maintainer | [Open an issue](https://github.com/dodge1218/contextclaw/issues) |
 
-If you hit 429 rate limits in your framework of choice, drop a PR with an adapter!
+The core scoring logic is framework-agnostic (~100 lines). Adapters welcome.
 
 ## License
 
 MIT
-
-## Links
-
-- [OpenClaw](https://github.com/openclaw/openclaw) — the AI agent framework ContextClaw plugs into
-- Built by [DreamSiteBuilders](https://dreamsitebuilders.com)

@@ -1,48 +1,32 @@
 /**
- * ContextClaw — OpenClaw Context Engine Plugin
+ * 🧠 ContextClaw — Context Engine Plugin for OpenClaw
  *
- * Smart context management that:
- * 1. Scores every message by recency, role, and relevance
- * 2. Evicts low-value content when approaching token budget
- * 3. Flushes evicted content to cold storage (local fs now, SSH later)
- * 4. Keeps user messages and recent assistant turns always in context
+ * Treats your context window like RAM, not a logbook.
+ * Scores every message by topic relevance, recency, and role —
+ * then evicts the lowest-value items to cold storage before
+ * each API call.
+ *
+ * MIT — https://github.com/dodge1218/contextclaw
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { WebSocketServer } from 'ws';
 
-let wss = null;
-const connectedClients = new Set();
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
 
-function initWebSocketServer() {
-  if (wss) return;
-  try {
-    wss = new WebSocketServer({ port: 41234 });
-    wss.on('connection', (ws) => {
-      connectedClients.add(ws);
-      ws.on('close', () => connectedClients.delete(ws));
-    });
-    console.log('[ContextClaw] WebSocket server listening on port 41234');
-  } catch (e) {
-    console.error('[ContextClaw] Failed to start WebSocket server:', e);
-  }
-}
-
-function broadcastTelemetry(data) {
-  const payload = JSON.stringify(data);
-  for (const client of connectedClients) {
-    if (client.readyState === 1) { // OPEN
-      client.send(payload);
-    }
-  }
-}
+const COLD_DIR = join(homedir(), '.openclaw', 'workspace', 'memory', 'cold');
+const TARGET_RATIO = 0.6;    // keep context at 60% of budget
+const WS_PORT = 41234;
 
 // ---------------------------------------------------------------------------
-// Token estimation (cl100k-style: ~4 chars per token)
+// Token estimation (~4 chars/token, cl100k-ish)
 // ---------------------------------------------------------------------------
-function estimateTokens(text) {
+
+function countTokens(text) {
   if (!text) return 0;
   if (typeof text !== 'string') text = JSON.stringify(text);
   return Math.ceil(text.length / 4);
@@ -50,22 +34,113 @@ function estimateTokens(text) {
 
 function messageTokens(msg) {
   if (!msg) return 0;
-  const content = msg.content;
-  if (typeof content === 'string') return estimateTokens(content);
-  if (Array.isArray(content)) {
-    return content.reduce((sum, block) => {
-      if (typeof block === 'string') return sum + estimateTokens(block);
-      if (block.type === 'text') return sum + estimateTokens(block.text);
-      return sum + 100; // images, tool results, etc.
+  const c = msg.content;
+  if (typeof c === 'string') return countTokens(c);
+  if (Array.isArray(c)) {
+    return c.reduce((sum, block) => {
+      if (typeof block === 'string') return sum + countTokens(block);
+      if (block.type === 'text') return sum + countTokens(block.text);
+      return sum + 100; // images, binary, etc.
     }, 0);
   }
-  return estimateTokens(JSON.stringify(content));
+  return countTokens(JSON.stringify(c));
 }
 
 // ---------------------------------------------------------------------------
-// Cold storage
+// Topic extraction — pull keywords from recent user messages
 // ---------------------------------------------------------------------------
-const COLD_DIR = join(homedir(), '.openclaw', 'workspace', 'memory', 'cold');
+
+const STOP_WORDS = new Set([
+  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+  'should', 'may', 'might', 'shall', 'can', 'need', 'dare', 'ought',
+  'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as',
+  'into', 'about', 'like', 'through', 'after', 'over', 'between',
+  'and', 'but', 'or', 'nor', 'not', 'so', 'yet', 'both', 'either',
+  'neither', 'each', 'every', 'all', 'any', 'few', 'more', 'most',
+  'other', 'some', 'such', 'no', 'only', 'own', 'same', 'than',
+  'too', 'very', 'just', 'because', 'if', 'when', 'where', 'how',
+  'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those',
+  'i', 'me', 'my', 'we', 'our', 'you', 'your', 'he', 'him', 'his',
+  'she', 'her', 'it', 'its', 'they', 'them', 'their', 'also', 'then',
+  'here', 'there', 'up', 'out', 'yes', 'no', 'ok', 'okay', 'sure',
+  'now', 'well', 'get', 'got', 'make', 'made', 'let', 'go', 'going',
+  'think', 'know', 'see', 'look', 'want', 'use', 'using', 'used',
+]);
+
+function extractKeywords(text) {
+  if (!text || typeof text !== 'string') return new Set();
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-_]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 2 && !STOP_WORDS.has(w))
+  );
+}
+
+function getTopicKeywords(messages) {
+  // Pull keywords from last 3 user messages = current topic
+  const recentUser = messages
+    .filter(m => m.role === 'user')
+    .slice(-3);
+
+  const keywords = new Set();
+  for (const msg of recentUser) {
+    const text = typeof msg.content === 'string'
+      ? msg.content
+      : JSON.stringify(msg.content);
+    for (const kw of extractKeywords(text)) {
+      keywords.add(kw);
+    }
+  }
+  return keywords;
+}
+
+// ---------------------------------------------------------------------------
+// Scoring — topic-aware, recency-weighted, role-adjusted
+// ---------------------------------------------------------------------------
+
+function scoreMessage(msg, index, total, topicKeywords) {
+  // System messages are sacred
+  if (msg.role === 'system') return 999;
+
+  let score = 0;
+
+  // 1. Recency: 0.0 (oldest) → 0.4 (newest)
+  score += (index / Math.max(total - 1, 1)) * 0.4;
+
+  // 2. Role weight
+  if (msg.role === 'user') score += 0.25;
+  else if (msg.role === 'assistant') score += 0.15;
+  else score += 0.05; // tool results, tool calls
+
+  // 3. Topic relevance: does this message mention current-topic keywords?
+  const text = typeof msg.content === 'string'
+    ? msg.content
+    : JSON.stringify(msg.content || '');
+  const msgWords = extractKeywords(text);
+  let overlap = 0;
+  for (const kw of msgWords) {
+    if (topicKeywords.has(kw)) overlap++;
+  }
+  // Normalize overlap to 0..0.35 range
+  const relevance = topicKeywords.size > 0
+    ? Math.min(overlap / topicKeywords.size, 1) * 0.35
+    : 0;
+  score += relevance;
+
+  // 4. Size penalty: bloated tool outputs are eviction candidates
+  const tokens = messageTokens(msg);
+  if (tokens > 5000) score -= 0.1;
+  if (tokens > 20000) score -= 0.2;
+
+  return score;
+}
+
+// ---------------------------------------------------------------------------
+// Cold storage — flush evicted messages to disk
+// ---------------------------------------------------------------------------
 
 function flushToCold(sessionId, messages) {
   if (!messages.length) return;
@@ -76,210 +151,197 @@ function flushToCold(sessionId, messages) {
     role: m.role,
     timestamp: m.timestamp || new Date().toISOString(),
     tokens: messageTokens(m),
+    // Truncate to save disk — full content isn't needed for recall
     content: typeof m.content === 'string'
       ? m.content.slice(0, 2000)
       : JSON.stringify(m.content).slice(0, 2000),
   }));
   writeFileSync(file, lines.join('\n') + '\n');
-  return file;
 }
 
 // ---------------------------------------------------------------------------
-// Scoring: higher = more valuable = keep longer
+// WebSocket telemetry — broadcast to Studio
 // ---------------------------------------------------------------------------
-function scoreMessage(msg, index, total, recentUserContent) {
-  let score = 0;
 
-  // Recency: linear 0..1
-  score += (index / Math.max(total - 1, 1)) * 0.4;
+let wss = null;
+const clients = new Set();
 
-  // Role weights
-  const role = msg.role;
-  if (role === 'system') return 999; // never evict
-  if (role === 'user') score += 0.35;
-  if (role === 'assistant') score += 0.15;
-  if (role === 'toolResult' || role === 'tool') score += 0.05;
-  if (role === 'toolCall' || role === 'function') score += 0.05;
+function initWs() {
+  if (wss) return;
+  try {
+    wss = new WebSocketServer({ port: WS_PORT });
+    wss.on('connection', ws => {
+      clients.add(ws);
+      ws.on('close', () => clients.delete(ws));
+    });
+  } catch (_) {
+    // Port busy — Studio not running, that's fine
+  }
+}
 
-  // Size penalty: huge messages are eviction candidates
-  const tokens = messageTokens(msg);
-  if (tokens > 5000) score -= 0.15;
-  if (tokens > 20000) score -= 0.25;
-
-  return score;
+function broadcast(data) {
+  const payload = JSON.stringify(data);
+  for (const c of clients) {
+    if (c.readyState === 1) c.send(payload);
+  }
 }
 
 // ---------------------------------------------------------------------------
 // ContextClaw Engine
 // ---------------------------------------------------------------------------
+
 class ContextClawEngine {
   constructor() {
     this.info = {
       id: 'contextclaw',
       name: 'ContextClaw',
-      version: '0.1.0',
+      version: '0.2.0',
       ownsCompaction: true,
     };
-    // Track per-session state
     this._sessions = new Map();
-    initWebSocketServer();
+    initWs();
   }
 
   async bootstrap({ sessionId }) {
-    this._sessions.set(sessionId, { ingested: 0, compactions: 0 });
+    this._sessions.set(sessionId, { turns: 0, evictions: 0 });
     return { bootstrapped: true };
   }
 
-  async ingest({ sessionId, message }) {
-    const s = this._sessions.get(sessionId) || { ingested: 0, compactions: 0 };
-    s.ingested++;
+  async ingest({ sessionId }) {
+    const s = this._sessions.get(sessionId) || { turns: 0, evictions: 0 };
+    s.turns++;
     this._sessions.set(sessionId, s);
     return { ingested: true };
   }
 
   async ingestBatch({ sessionId, messages }) {
-    const s = this._sessions.get(sessionId) || { ingested: 0, compactions: 0 };
-    s.ingested += messages.length;
+    const s = this._sessions.get(sessionId) || { turns: 0, evictions: 0 };
+    s.turns += messages.length;
     this._sessions.set(sessionId, s);
     return { ingestedCount: messages.length };
   }
 
-  async assemble({ sessionId, messages, tokenBudget, prompt }) {
-    // Dynamic budget: use provider budget if available, else 55K
+  /**
+   * Core loop — runs on every turn before the API call.
+   *
+   * 1. Extract topic keywords from last 3 user messages
+   * 2. Score every message: topic relevance + recency + role - size penalty
+   * 3. Evict lowest-scored until we're at 60% of budget
+   * 4. Flush evicted messages to cold storage on disk
+   * 5. Broadcast telemetry to Studio via WebSocket
+   */
+  async assemble({ sessionId, messages, tokenBudget }) {
     if (!tokenBudget) tokenBudget = 55000;
-    // Target: always compact to 60% of budget to stay lean
-    const target = tokenBudget * 0.6;
+    const target = tokenBudget * TARGET_RATIO;
 
-    // Score all messages
+    // Step 1: What is the user talking about right now?
+    const topicKeywords = getTopicKeywords(messages);
+
+    // Step 2: Score everything
     const scored = messages.map((msg, i) => ({
       msg,
       index: i,
       tokens: messageTokens(msg),
-      score: scoreMessage(msg, i, messages.length),
+      score: scoreMessage(msg, i, messages.length, topicKeywords),
     }));
 
-    // Calculate total
     const totalTokens = scored.reduce((s, m) => s + m.tokens, 0);
 
-    // ALWAYS prune on every turn — evict lowest-scored until under target
-    const evictOrder = [...scored]
-      .filter(s => s.score < 999) // never evict system
+    // Step 3: Evict lowest-scored until under target
+    const evictCandidates = [...scored]
+      .filter(s => s.score < 999)
       .sort((a, b) => a.score - b.score);
 
     const evicted = new Set();
     let currentTokens = totalTokens;
 
-    for (const item of evictOrder) {
+    for (const item of evictCandidates) {
       if (currentTokens <= target) break;
       evicted.add(item.index);
       currentTokens -= item.tokens;
     }
 
-    // Flush evicted messages to cold storage
-    const evictedMsgs = scored
-      .filter(s => evicted.has(s.index))
-      .map(s => s.msg);
+    // Step 4: Cold storage
+    const evictedMsgs = scored.filter(s => evicted.has(s.index)).map(s => s.msg);
     if (evictedMsgs.length > 0) {
       flushToCold(sessionId, evictedMsgs);
     }
 
-    // Build output preserving original order
-    const kept = scored
-      .filter(s => !evicted.has(s.index))
-      .map(s => s.msg);
-
+    // Build output (preserve original order)
+    const kept = scored.filter(s => !evicted.has(s.index)).map(s => s.msg);
     const keptTokens = scored
       .filter(s => !evicted.has(s.index))
       .reduce((sum, s) => sum + s.tokens, 0);
 
-    const addition = evictedMsgs.length > 0
-      ? `[ContextClaw] ${evictedMsgs.length} older messages evicted to cold storage. ${keptTokens} tokens retained of ${totalTokens} original.`
-      : undefined;
-
-    // Broadcast telemetry to Studio
-    broadcastTelemetry({
+    // Step 5: Telemetry
+    broadcast({
       type: 'ASSEMBLE',
       sessionId,
       totalTokens,
       keptTokens,
       evictedCount: evictedMsgs.length,
-      budget: tokenBudget
+      budget: tokenBudget,
+      topicKeywords: [...topicKeywords].slice(0, 10),
     });
+
+    const s = this._sessions.get(sessionId) || { turns: 0, evictions: 0 };
+    s.evictions += evictedMsgs.length;
+    this._sessions.set(sessionId, s);
 
     return {
       messages: kept,
       estimatedTokens: keptTokens,
-      systemPromptAddition: addition,
+      systemPromptAddition: evictedMsgs.length > 0
+        ? `[ContextClaw] Evicted ${evictedMsgs.length} low-relevance messages. ${keptTokens} tokens kept of ${totalTokens}. Topic: ${[...topicKeywords].slice(0, 5).join(', ')}`
+        : undefined,
     };
   }
 
-  async compact({ sessionId, sessionFile, tokenBudget, force, currentTokenCount }) {
-    const budget = tokenBudget || 55000;
-    const current = currentTokenCount || 0;
-    const s = this._sessions.get(sessionId) || { ingested: 0, compactions: 0 };
-
-    // Only compact if over 90% of budget or forced
-    if (!force && current < budget * 0.9) {
-      return { ok: true, compacted: false, reason: `Under threshold (${current}/${budget})` };
-    }
-
-    s.compactions++;
-    this._sessions.set(sessionId, s);
-
+  async compact({ sessionId, tokenBudget, force, currentTokenCount }) {
+    // ContextClaw handles compaction at assemble time, not here
     return {
       ok: true,
-      compacted: true,
-      reason: 'Delegated to assemble-time eviction',
-      result: {
-        tokensBefore: current,
-        tokensAfter: Math.floor(budget * 0.85),
-        summary: `ContextClaw compaction #${s.compactions}: eviction handled at assemble time`,
-      },
+      compacted: force,
+      reason: 'ContextClaw handles eviction at assemble time',
     };
   }
 
-  async afterTurn({ sessionId, messages, tokenBudget, runtimeContext }) {
-    // Proactive maintenance: if tool results are huge, rewrite them
+  async afterTurn({ sessionId, messages, runtimeContext }) {
+    // Truncate oversized tool results in the transcript
     if (!runtimeContext?.rewriteTranscriptEntries) return;
 
     const replacements = [];
     for (const msg of messages) {
       if ((msg.role === 'toolResult' || msg.role === 'tool') && messageTokens(msg) > 5000) {
-        // Truncate oversized tool results in the transcript
         const truncated = typeof msg.content === 'string'
-          ? msg.content.slice(0, 2000) + '\n\n[ContextClaw: truncated from ' + messageTokens(msg) + ' tokens]'
+          ? msg.content.slice(0, 2000) + `\n\n[ContextClaw: truncated from ${messageTokens(msg)} tokens]`
           : msg.content;
-
         if (msg.id) {
-          replacements.push({
-            entryId: msg.id,
-            message: { ...msg, content: truncated },
-          });
+          replacements.push({ entryId: msg.id, message: { ...msg, content: truncated } });
         }
       }
     }
 
     if (replacements.length > 0) {
-      try {
-        await runtimeContext.rewriteTranscriptEntries({ replacements });
-      } catch (e) {
-        // Best effort — don't crash the turn
-      }
+      try { await runtimeContext.rewriteTranscriptEntries({ replacements }); }
+      catch (_) { /* best effort */ }
     }
   }
 
-  async maintain({ sessionId }) {
+  async maintain() {
     return { changed: false, bytesFreed: 0, rewrittenEntries: 0 };
   }
 
   async dispose() {
     this._sessions.clear();
+    if (wss) { wss.close(); wss = null; }
   }
 }
 
 // ---------------------------------------------------------------------------
 // Plugin registration
 // ---------------------------------------------------------------------------
+
 export default function setup(runtime) {
   runtime.registerContextEngine('contextclaw', () => new ContextClawEngine());
 }
