@@ -29,7 +29,7 @@ const stats = {
 };
 
 const COLD_DIR = join(homedir(), '.openclaw', 'workspace', 'memory', 'cold');
-const TARGET_RATIO = 0.60;   // keep context at 60% of budget — real tokenizer now, no guesswork
+const TARGET_RATIO = 0.12;   // aggressive for testing — force eviction on small sessions
 const WS_PORT = 41234;
 
 // ---------------------------------------------------------------------------
