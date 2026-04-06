@@ -170,12 +170,13 @@ function initWs() {
   if (wss) return;
   try {
     wss = new WebSocketServer({ port: WS_PORT });
+    wss.on('error', () => { wss = null; }); // port busy, skip
     wss.on('connection', ws => {
       clients.add(ws);
       ws.on('close', () => clients.delete(ws));
     });
   } catch (_) {
-    // Port busy — Studio not running, that's fine
+    wss = null;
   }
 }
 
