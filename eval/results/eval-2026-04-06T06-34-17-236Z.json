@@ -1,0 +1,9 @@
+{
+  "scenarios": [],
+  "aggregate": {
+    "totalFull": 0,
+    "totalPruned": 0,
+    "reduction": null,
+    "scenarioCount": 0
+  }
+}

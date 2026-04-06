@@ -1,0 +1,12 @@
+{
+  "name": "contextclaw-eval",
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "eval": "node run-eval.js",
+    "eval:live": "node run-eval.js --live --scenarios=20"
+  },
+  "dependencies": {
+    "tiktoken": "^1.0.0"
+  }
+}
