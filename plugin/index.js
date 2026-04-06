@@ -41,10 +41,12 @@ function countTokens(text) {
   if (!text) return 0;
   if (typeof text !== 'string') text = JSON.stringify(text);
   try {
-    return enc.encode(text).length;
+    const real = enc.encode(text).length;
+    // Add 15% safety margin — cl100k_base != Claude/Gemini tokenizer
+    // Overcount is safer than undercount (evict too much > evict too little)
+    return Math.ceil(real * 1.15);
   } catch (_) {
-    // Fallback: ~5.5 chars/token for English text (measured)
-    return Math.ceil(text.length / 5);
+    return Math.ceil(text.length / 3.5);
   }
 }
 
@@ -140,13 +142,23 @@ function scoreMessage(msg, index, total, topicKeywords) {
   for (const kw of msgWords) {
     if (topicKeywords.has(kw)) overlap++;
   }
-  // Normalize overlap to 0..0.35 range
   const relevance = topicKeywords.size > 0
     ? Math.min(overlap / topicKeywords.size, 1) * 0.35
     : 0;
   score += relevance;
 
-  // 4. Size penalty: bloated tool outputs are prime eviction candidates
+  // 4. Safety/constraint anchors — never evict instructions that constrain behavior
+  const lower = text.toLowerCase();
+  const SAFETY_PATTERNS = [
+    'never ', 'always ', 'don\'t ', 'do not ', 'must ', 'required',
+    'approval', 'permission', 'secret', 'credential', 'password',
+    'constraint', 'rule:', 'important:', 'warning:', 'blocker',
+  ];
+  if (SAFETY_PATTERNS.some(p => lower.includes(p))) {
+    score += 0.5; // strong protection for constraint-bearing messages
+  }
+
+  // 5. Size penalty: bloated tool outputs are prime eviction candidates
   const tokens = messageTokens(msg);
   if (tokens > 2000) score -= 0.15;
   if (tokens > 5000) score -= 0.25;
@@ -162,20 +174,26 @@ function scoreMessage(msg, index, total, topicKeywords) {
 
 function flushToCold(sessionId, messages) {
   if (!messages.length) return;
-  mkdirSync(COLD_DIR, { recursive: true });
-  const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  const sid = (sessionId || 'unknown').slice(0, 8);
-  const file = join(COLD_DIR, `${sid}-${ts}.jsonl`);
-  const lines = messages.map(m => JSON.stringify({
-    role: m.role,
-    timestamp: m.timestamp || new Date().toISOString(),
-    tokens: messageTokens(m),
-    // Truncate to save disk — full content isn't needed for recall
-    content: typeof m.content === 'string'
-      ? (m.content || '').slice(0, 2000)
-      : JSON.stringify(m.content || '').slice(0, 2000),
-  }));
-  writeFileSync(file, lines.join('\n') + '\n');
+  // Async write — don't block the API call for disk I/O
+  setImmediate(() => {
+    try {
+      mkdirSync(COLD_DIR, { recursive: true });
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const sid = (sessionId || 'unknown').slice(0, 8);
+      const file = join(COLD_DIR, `${sid}-${ts}.jsonl`);
+      const lines = messages.map(m => JSON.stringify({
+        role: m.role,
+        timestamp: m.timestamp || new Date().toISOString(),
+        tokens: messageTokens(m),
+        content: typeof m.content === 'string'
+          ? (m.content || '').slice(0, 2000)
+          : JSON.stringify(m.content || '').slice(0, 2000),
+      }));
+      writeFileSync(file, lines.join('\n') + '\n');
+    } catch (e) {
+      console.error('[ContextClaw] cold storage flush failed:', e.message);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -323,6 +341,11 @@ class ContextClawEngine {
 
     if (evictedMsgs.length > 0) {
       console.log(`[ContextClaw] evicted ${evictedMsgs.length} msgs, saved ${tokensSaved} tokens this turn | lifetime: ${stats.totalTokensSaved} tokens saved across ${stats.totalAssembleCalls} turns`);
+      // Audit trail: log what was evicted so bad responses can be traced
+      const evictedScores = scored
+        .filter(s => evicted.has(s.index))
+        .map(s => ({ role: s.msg.role, tokens: s.tokens, score: s.score.toFixed(3), preview: (typeof s.msg.content === 'string' ? s.msg.content : '').slice(0, 60) }));
+      console.log(`[ContextClaw] eviction audit: ${JSON.stringify(evictedScores.slice(0, 5))}${evictedScores.length > 5 ? ` ...and ${evictedScores.length - 5} more` : ''}`);
     }
 
     // Step 6: Intent extraction — ensure multi-part prompts get fully addressed
