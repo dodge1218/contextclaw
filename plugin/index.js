@@ -207,7 +207,7 @@ class ContextClawEngine {
       id: 'contextclaw',
       name: 'ContextClaw',
       version: '0.2.0',
-      ownsCompaction: true,
+      ownsCompaction: false,
     };
     this._sessions = new Map();
     initWs();
