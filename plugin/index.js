@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { WebSocketServer } from 'ws';
 import { encoding_for_model } from 'tiktoken';
+import { preProcessPrompt, scoreCompleteness } from './intent-extractor.js';
 
 // Reuse a single encoder instance (cl100k_base covers GPT-4/Claude-class models)
 const enc = encoding_for_model('gpt-4');
@@ -29,7 +30,7 @@ const stats = {
 };
 
 const COLD_DIR = join(homedir(), '.openclaw', 'workspace', 'memory', 'cold');
-const TARGET_RATIO = 0.12;   // aggressive for testing — force eviction on small sessions
+const TARGET_RATIO = 0.60;   // keep context at 60% of budget
 const WS_PORT = 41234;
 
 // ---------------------------------------------------------------------------
@@ -324,12 +325,22 @@ class ContextClawEngine {
       console.log(`[ContextClaw] evicted ${evictedMsgs.length} msgs, saved ${tokensSaved} tokens this turn | lifetime: ${stats.totalTokensSaved} tokens saved across ${stats.totalAssembleCalls} turns`);
     }
 
+    // Step 6: Intent extraction — ensure multi-part prompts get fully addressed
+    const { checklist, intents } = preProcessPrompt(kept);
+
+    const additions = [];
+    if (evictedMsgs.length > 0) {
+      additions.push(`[ContextClaw] Evicted ${evictedMsgs.length} low-relevance messages. ${keptTokens} tokens kept of ${totalTokens}. Topic: ${[...topicKeywords].slice(0, 5).join(', ')}`);
+    }
+    if (checklist) {
+      additions.push(checklist);
+      console.log(`[ContextClaw] Intent extraction: ${intents.length} intents found in latest prompt`);
+    }
+
     return {
       messages: kept,
       estimatedTokens: keptTokens,
-      systemPromptAddition: evictedMsgs.length > 0
-        ? `[ContextClaw] Evicted ${evictedMsgs.length} low-relevance messages. ${keptTokens} tokens kept of ${totalTokens}. Topic: ${[...topicKeywords].slice(0, 5).join(', ')}`
-        : undefined,
+      systemPromptAddition: additions.length > 0 ? additions.join('\n\n') : undefined,
     };
   }
 
