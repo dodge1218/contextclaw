@@ -1,26 +1,31 @@
 {
   "id": "contextclaw",
   "name": "ContextClaw",
-  "description": "Smart context engine that evicts bloat, flushes to cold storage, and keeps sessions lean",
-  "version": "0.1.0",
+  "description": "Classifies context by content type and applies retention policies. Files get truncated. Command output gets tailed. Your conversation stays intact.",
+  "version": "1.0.0",
   "kind": "context-engine",
   "configSchema": {
     "type": "object",
     "properties": {
       "coldStorageDir": {
         "type": "string",
-        "description": "Directory for evicted context cold storage",
+        "description": "Directory for cold-stored truncated content",
         "default": "~/.openclaw/workspace/memory/cold"
       },
-      "evictionThreshold": {
-        "type": "number",
-        "description": "Fraction of token budget that triggers eviction (0-1)",
-        "default": 0.9
-      },
-      "keepRecentTurns": {
+      "wsPort": {
         "type": "integer",
-        "description": "Minimum recent assistant turns to always keep",
-        "default": 5
+        "description": "Port for WebSocket telemetry (Studio)",
+        "default": 41234
+      },
+      "enableTelemetry": {
+        "type": "boolean",
+        "description": "Enable WebSocket telemetry broadcast",
+        "default": true
+      },
+      "policies": {
+        "type": "object",
+        "description": "Per-type policy overrides (keyed by content type)",
+        "additionalProperties": true
       }
     },
     "additionalProperties": false

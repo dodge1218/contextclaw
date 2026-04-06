@@ -1,10 +1,8 @@
 /**
- * 🧠 ContextClaw — Context Engine Plugin for OpenClaw
+ * 🧠 ContextClaw v1 — Context Engine Plugin for OpenClaw
  *
- * Treats your context window like RAM, not a logbook.
- * Scores every message by topic relevance, recency, and role —
- * then evicts the lowest-value items to cold storage before
- * each API call.
+ * Classifies context by content type. Applies retention policies.
+ * Files get truncated. Command output gets tailed. Conversations stay intact.
  *
  * MIT — https://github.com/dodge1218/contextclaw
  */
@@ -13,181 +11,52 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { WebSocketServer } from 'ws';
-import { encoding_for_model } from 'tiktoken';
-import { preProcessPrompt, scoreCompleteness } from './intent-extractor.js';
+import { classifyAll, TYPES } from './classifier.js';
+import { applyPolicy, DEFAULT_POLICIES } from './policy.js';
 
-// Reuse a single encoder instance (cl100k_base covers GPT-4/Claude-class models)
-const enc = encoding_for_model('gpt-4');
-
-// ---------------------------------------------------------------------------
-// Lifetime stats — track total tokens saved
-// ---------------------------------------------------------------------------
+// -------------------------------------------------------
+// Lifetime stats
+// -------------------------------------------------------
 
 const stats = {
-  totalEvicted: 0,
-  totalTokensSaved: 0,
+  totalTruncated: 0,
+  totalCharsSaved: 0,
   totalAssembleCalls: 0,
+  byType: {},
 };
 
-const COLD_DIR = join(homedir(), '.openclaw', 'workspace', 'memory', 'cold');
-const TARGET_RATIO = 0.60;   // keep context at 60% of budget
-const WS_PORT = 41234;
+// Default config
+const DEFAULT_CONFIG = {
+  coldStorageDir: join(homedir(), '.openclaw', 'workspace', 'memory', 'cold'),
+  wsPort: 41234,
+  enableTelemetry: true,
+  policies: {},  // per-type policy overrides
+};
 
-// ---------------------------------------------------------------------------
-// Token estimation (~4 chars/token, cl100k-ish)
-// ---------------------------------------------------------------------------
+// -------------------------------------------------------
+// Cold storage — flush truncated/evicted items to disk
+// -------------------------------------------------------
 
-function countTokens(text) {
-  if (!text) return 0;
-  if (typeof text !== 'string') text = JSON.stringify(text);
-  try {
-    const real = enc.encode(text).length;
-    // Add 15% safety margin — cl100k_base != Claude/Gemini tokenizer
-    // Overcount is safer than undercount (evict too much > evict too little)
-    return Math.ceil(real * 1.15);
-  } catch (_) {
-    return Math.ceil(text.length / 3.5);
-  }
-}
-
-function messageTokens(msg) {
-  if (!msg) return 0;
-  const c = msg.content;
-  if (typeof c === 'string') return countTokens(c);
-  if (Array.isArray(c)) {
-    return c.reduce((sum, block) => {
-      if (typeof block === 'string') return sum + countTokens(block);
-      if (block.type === 'text') return sum + countTokens(block.text);
-      return sum + 100; // images, binary, etc.
-    }, 0);
-  }
-  return countTokens(JSON.stringify(c));
-}
-
-// ---------------------------------------------------------------------------
-// Topic extraction — pull keywords from recent user messages
-// ---------------------------------------------------------------------------
-
-const STOP_WORDS = new Set([
-  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-  'should', 'may', 'might', 'shall', 'can', 'need', 'dare', 'ought',
-  'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as',
-  'into', 'about', 'like', 'through', 'after', 'over', 'between',
-  'and', 'but', 'or', 'nor', 'not', 'so', 'yet', 'both', 'either',
-  'neither', 'each', 'every', 'all', 'any', 'few', 'more', 'most',
-  'other', 'some', 'such', 'no', 'only', 'own', 'same', 'than',
-  'too', 'very', 'just', 'because', 'if', 'when', 'where', 'how',
-  'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those',
-  'i', 'me', 'my', 'we', 'our', 'you', 'your', 'he', 'him', 'his',
-  'she', 'her', 'it', 'its', 'they', 'them', 'their', 'also', 'then',
-  'here', 'there', 'up', 'out', 'yes', 'no', 'ok', 'okay', 'sure',
-  'now', 'well', 'get', 'got', 'make', 'made', 'let', 'go', 'going',
-  'think', 'know', 'see', 'look', 'want', 'use', 'using', 'used',
-]);
-
-function extractKeywords(text) {
-  if (!text || typeof text !== 'string') return new Set();
-  return new Set(
-    text
-      .toLowerCase()
-      .replace(/[^a-z0-9\s-_]/g, ' ')
-      .split(/\s+/)
-      .filter(w => w.length > 2 && !STOP_WORDS.has(w))
-  );
-}
-
-function getTopicKeywords(messages) {
-  // Pull keywords from last 3 user messages = current topic
-  const recentUser = messages
-    .filter(m => m.role === 'user')
-    .slice(-3);
-
-  const keywords = new Set();
-  for (const msg of recentUser) {
-    const text = typeof msg.content === 'string'
-      ? msg.content
-      : JSON.stringify(msg.content);
-    for (const kw of extractKeywords(text)) {
-      keywords.add(kw);
-    }
-  }
-  return keywords;
-}
-
-// ---------------------------------------------------------------------------
-// Scoring — topic-aware, recency-weighted, role-adjusted
-// ---------------------------------------------------------------------------
-
-function scoreMessage(msg, index, total, topicKeywords) {
-  // System messages are sacred
-  if (msg.role === 'system') return 999;
-
-  let score = 0;
-
-  // 1. Recency: 0.0 (oldest) → 0.4 (newest)
-  score += (index / Math.max(total - 1, 1)) * 0.4;
-
-  // 2. Role weight
-  if (msg.role === 'user') score += 0.25;
-  else if (msg.role === 'assistant') score += 0.15;
-  else score += 0.05; // tool results, tool calls
-
-  // 3. Topic relevance: does this message mention current-topic keywords?
-  const text = typeof msg.content === 'string'
-    ? msg.content
-    : JSON.stringify(msg.content || '');
-  const msgWords = extractKeywords(text);
-  let overlap = 0;
-  for (const kw of msgWords) {
-    if (topicKeywords.has(kw)) overlap++;
-  }
-  const relevance = topicKeywords.size > 0
-    ? Math.min(overlap / topicKeywords.size, 1) * 0.35
-    : 0;
-  score += relevance;
-
-  // 4. Safety/constraint anchors — never evict instructions that constrain behavior
-  const lower = text.toLowerCase();
-  const SAFETY_PATTERNS = [
-    'never ', 'always ', 'don\'t ', 'do not ', 'must ', 'required',
-    'approval', 'permission', 'secret', 'credential', 'password',
-    'constraint', 'rule:', 'important:', 'warning:', 'blocker',
-  ];
-  if (SAFETY_PATTERNS.some(p => lower.includes(p))) {
-    score += 0.5; // strong protection for constraint-bearing messages
-  }
-
-  // 5. Size penalty: bloated tool outputs are prime eviction candidates
-  const tokens = messageTokens(msg);
-  if (tokens > 2000) score -= 0.15;
-  if (tokens > 5000) score -= 0.25;
-  if (tokens > 10000) score -= 0.35;
-  if (tokens > 20000) score -= 0.5;
-
-  return score;
-}
-
-// ---------------------------------------------------------------------------
-// Cold storage — flush evicted messages to disk
-// ---------------------------------------------------------------------------
-
-function flushToCold(sessionId, messages) {
-  if (!messages.length) return;
-  // Async write — don't block the API call for disk I/O
+function flushToCold(sessionId, items, coldDir) {
+  if (!items.length) return;
   setImmediate(() => {
     try {
-      mkdirSync(COLD_DIR, { recursive: true });
+      const expandedDir = coldDir.startsWith('~/')
+        ? join(homedir(), coldDir.slice(2))
+        : coldDir;
+      mkdirSync(expandedDir, { recursive: true });
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
       const sid = (sessionId || 'unknown').slice(0, 8);
-      const file = join(COLD_DIR, `${sid}-${ts}.jsonl`);
-      const lines = messages.map(m => JSON.stringify({
-        role: m.role,
-        timestamp: m.timestamp || new Date().toISOString(),
-        tokens: messageTokens(m),
-        content: typeof m.content === 'string'
-          ? (m.content || '').slice(0, 2000)
-          : JSON.stringify(m.content || '').slice(0, 2000),
+      const file = join(expandedDir, `${sid}-${ts}.jsonl`);
+      const lines = items.map(item => JSON.stringify({
+        role: item.msg.role,
+        type: item.msg._type,
+        timestamp: item.msg.timestamp || new Date().toISOString(),
+        originalChars: item.originalChars,
+        action: item.action,
+        content: typeof item.msg.content === 'string'
+          ? item.msg.content.slice(0, 3000)
+          : JSON.stringify(item.msg.content || '').slice(0, 3000),
       }));
       writeFileSync(file, lines.join('\n') + '\n');
     } catch (e) {
@@ -196,206 +65,184 @@ function flushToCold(sessionId, messages) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// WebSocket telemetry — broadcast to Studio
-// ---------------------------------------------------------------------------
+// -------------------------------------------------------
+// Turn counter — figure out how many turns ago each message was
+// -------------------------------------------------------
 
-let wss = null;
-const clients = new Set();
+function computeTurnsAgo(messages) {
+  // A "turn" = a user message. Count backwards from the end.
+  let turnCount = 0;
+  const turnsAgo = new Array(messages.length).fill(0);
 
-function initWs() {
-  if (wss) return;
-  try {
-    wss = new WebSocketServer({ port: WS_PORT });
-    wss.on('error', () => { wss = null; }); // port busy, skip
-    wss.on('connection', ws => {
-      clients.add(ws);
-      ws.on('close', () => clients.delete(ws));
-    });
-  } catch (_) {
-    wss = null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    turnsAgo[i] = turnCount;
+    if (messages[i].role === 'user') turnCount++;
   }
+
+  return turnsAgo;
 }
 
-function broadcast(data) {
-  const payload = JSON.stringify(data);
-  for (const c of clients) {
-    if (c.readyState === 1) c.send(payload);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// ContextClaw Engine
-// ---------------------------------------------------------------------------
+// -------------------------------------------------------
+// Engine
+// -------------------------------------------------------
 
 class ContextClawEngine {
-  constructor() {
+  constructor(pluginConfig) {
     this.info = {
       id: 'contextclaw',
       name: 'ContextClaw',
-      version: '0.2.0',
-      ownsCompaction: true,
+      version: '1.0.0',
+      ownsCompaction: false,
     };
     this._sessions = new Map();
-    initWs();
+    this.config = { ...DEFAULT_CONFIG, ...pluginConfig };
+    this.wss = null;
+    this.clients = new Set();
+    if (this.config.enableTelemetry) {
+      this._initWs();
+    }
+  }
+
+  _initWs() {
+    if (this.wss) return;
+    try {
+      this.wss = new WebSocketServer({ port: this.config.wsPort });
+      this.wss.on('error', (e) => {
+        console.warn(`[ContextClaw] WS error port ${this.config.wsPort}: ${e.message}`);
+        this.wss = null;
+      });
+      this.wss.on('connection', ws => {
+        this.clients.add(ws);
+        ws.on('close', () => this.clients.delete(ws));
+      });
+    } catch (e) {
+      this.wss = null;
+    }
+  }
+
+  _broadcast(data) {
+    if (!this.wss) return;
+    try {
+      const payload = JSON.stringify(data);
+      for (const c of this.clients) {
+        if (c.readyState === 1) c.send(payload);
+      }
+    } catch (_) {}
   }
 
   async bootstrap({ sessionId }) {
-    this._sessions.set(sessionId, { turns: 0, evictions: 0 });
+    this._sessions.set(sessionId, { turns: 0 });
     return { bootstrapped: true };
   }
 
   async ingest({ sessionId }) {
-    const s = this._sessions.get(sessionId) || { turns: 0, evictions: 0 };
+    const s = this._sessions.get(sessionId) || { turns: 0 };
     s.turns++;
     this._sessions.set(sessionId, s);
     return { ingested: true };
   }
 
   async ingestBatch({ sessionId, messages }) {
-    const s = this._sessions.get(sessionId) || { turns: 0, evictions: 0 };
+    const s = this._sessions.get(sessionId) || { turns: 0 };
     s.turns += messages.length;
     this._sessions.set(sessionId, s);
     return { ingestedCount: messages.length };
   }
 
   /**
-   * Core loop — runs on every turn before the API call.
-   *
-   * 1. Extract topic keywords from last 3 user messages
-   * 2. Score every message: topic relevance + recency + role - size penalty
-   * 3. Evict lowest-scored until we're at 60% of budget
-   * 4. Flush evicted messages to cold storage on disk
-   * 5. Broadcast telemetry to Studio via WebSocket
+   * Core loop:
+   * 1. Classify every message by content type
+   * 2. Compute how many turns ago each message was
+   * 3. Apply retention policy per type
+   * 4. Cold-store anything truncated
+   * 5. Return the lean message set
    */
   async assemble({ sessionId, messages, tokenBudget }) {
-    if (!tokenBudget) tokenBudget = 55000;
-    const target = tokenBudget * TARGET_RATIO;
+    try {
+      stats.totalAssembleCalls++;
 
-    stats.totalAssembleCalls++;
+      // Step 1: classify
+      const classified = classifyAll(messages);
 
-    // Step 1: What is the user talking about right now?
-    const topicKeywords = getTopicKeywords(messages);
+      // Step 2: turn distance
+      const turnsAgo = computeTurnsAgo(classified);
 
-    // Step 2: Score everything
-    const scored = messages.map((msg, i) => ({
-      msg,
-      index: i,
-      tokens: messageTokens(msg),
-      score: scoreMessage(msg, i, messages.length, topicKeywords),
-    }));
+      // Step 3: apply policies
+      const results = classified.map((msg, i) =>
+        applyPolicy(msg, turnsAgo[i], this.config.policies)
+      );
 
-    const totalTokens = scored.reduce((s, m) => s + m.tokens, 0);
+      // Step 4: collect what to cold-store
+      const truncatedItems = results.filter(r =>
+        r.action === 'truncate' &&
+        DEFAULT_POLICIES[r.msg._type]?.coldStore !== false
+      );
 
-    console.log(`[ContextClaw] assemble: ${messages.length} msgs, ${totalTokens} tokens (real), budget=${tokenBudget}, target=${target}`);
+      if (truncatedItems.length > 0) {
+        flushToCold(sessionId, truncatedItems, this.config.coldStorageDir);
+      }
 
-    // Step 3: Protect last 3 turn pairs (6 messages) — never evict these
-    const PROTECTED_TURNS = 6; // 3 user + 3 assistant
-    const protectedStart = Math.max(0, messages.length - PROTECTED_TURNS);
-    
-    const evictCandidates = [...scored]
-      .filter(s => s.score < 999 && s.index < protectedStart) // skip system AND recent turns
-      .sort((a, b) => a.score - b.score);
+      // Step 5: build output
+      const kept = results.map(r => {
+        // Strip internal metadata before returning
+        const { _type, _chars, _truncated, _originalChars, ...clean } = r.msg;
+        return clean;
+      });
 
-    const evicted = new Set();
-    let currentTokens = totalTokens;
-
-    for (const item of evictCandidates) {
-      if (currentTokens <= target) break;
-      evicted.add(item.index);
-      currentTokens -= item.tokens;
-    }
-
-    // Step 4: Cold storage
-    const evictedMsgs = scored.filter(s => evicted.has(s.index)).map(s => s.msg);
-    if (evictedMsgs.length > 0) {
-      flushToCold(sessionId, evictedMsgs);
-    }
-
-    // Build output (preserve original order)
-    const kept = scored.filter(s => !evicted.has(s.index)).map(s => s.msg);
-    const keptTokens = scored
-      .filter(s => !evicted.has(s.index))
-      .reduce((sum, s) => sum + s.tokens, 0);
-
-    // Step 5: Telemetry
-    broadcast({
-      type: 'ASSEMBLE',
-      sessionId,
-      totalTokens,
-      keptTokens,
-      evictedCount: evictedMsgs.length,
-      budget: tokenBudget,
-      topicKeywords: [...topicKeywords].slice(0, 10),
-      lifetimeTokensSaved: stats.totalTokensSaved,
-      lifetimeEvictions: stats.totalEvicted,
-      lifetimeAssembles: stats.totalAssembleCalls,
-    });
-
-    const sess = this._sessions.get(sessionId) || { turns: 0, evictions: 0 };
-    sess.evictions += evictedMsgs.length;
-    const tokensSaved = totalTokens - keptTokens;
-    stats.totalEvicted += evictedMsgs.length;
-    stats.totalTokensSaved += tokensSaved;
-    this._sessions.set(sessionId, sess);
-
-    if (evictedMsgs.length > 0) {
-      console.log(`[ContextClaw] evicted ${evictedMsgs.length} msgs, saved ${tokensSaved} tokens this turn | lifetime: ${stats.totalTokensSaved} tokens saved across ${stats.totalAssembleCalls} turns`);
-      // Audit trail: log what was evicted so bad responses can be traced
-      const evictedScores = scored
-        .filter(s => evicted.has(s.index))
-        .map(s => ({ role: s.msg.role, tokens: s.tokens, score: s.score.toFixed(3), preview: (typeof s.msg.content === 'string' ? s.msg.content : '').slice(0, 60) }));
-      console.log(`[ContextClaw] eviction audit: ${JSON.stringify(evictedScores.slice(0, 5))}${evictedScores.length > 5 ? ` ...and ${evictedScores.length - 5} more` : ''}`);
-    }
-
-    // Step 6: Intent extraction — ensure multi-part prompts get fully addressed
-    const { checklist, intents } = preProcessPrompt(kept);
-
-    const additions = [];
-    if (evictedMsgs.length > 0) {
-      additions.push(`[ContextClaw] Evicted ${evictedMsgs.length} low-relevance messages. ${keptTokens} tokens kept of ${totalTokens}. Topic: ${[...topicKeywords].slice(0, 5).join(', ')}`);
-    }
-    if (checklist) {
-      additions.push(checklist);
-      console.log(`[ContextClaw] Intent extraction: ${intents.length} intents found in latest prompt`);
-    }
-
-    return {
-      messages: kept,
-      estimatedTokens: keptTokens,
-      systemPromptAddition: additions.length > 0 ? additions.join('\n\n') : undefined,
-    };
-  }
-
-  async compact({ sessionId, tokenBudget, force, currentTokenCount }) {
-    // ContextClaw handles compaction at assemble time, not here
-    return {
-      ok: true,
-      compacted: force,
-      reason: 'ContextClaw handles eviction at assemble time',
-    };
-  }
-
-  async afterTurn({ sessionId, messages, runtimeContext }) {
-    // Truncate oversized tool results in the transcript
-    if (!runtimeContext?.rewriteTranscriptEntries) return;
-
-    const replacements = [];
-    for (const msg of messages) {
-      if ((msg.role === 'toolResult' || msg.role === 'tool') && messageTokens(msg) > 5000) {
-        const truncated = typeof msg.content === 'string'
-          ? msg.content.slice(0, 2000) + `\n\n[ContextClaw: truncated from ${messageTokens(msg)} tokens]`
-          : msg.content;
-        if (msg.id) {
-          replacements.push({ entryId: msg.id, message: { ...msg, content: truncated } });
+      // Stats
+      let totalSavedChars = 0;
+      const typeCounts = {};
+      for (const r of results) {
+        const type = r.msg._type;
+        if (!typeCounts[type]) typeCounts[type] = { count: 0, truncated: 0, charsSaved: 0 };
+        typeCounts[type].count++;
+        if (r.action === 'truncate') {
+          typeCounts[type].truncated++;
+          typeCounts[type].charsSaved += r.savedChars || 0;
+          totalSavedChars += r.savedChars || 0;
+          stats.totalTruncated++;
+          stats.totalCharsSaved += r.savedChars || 0;
         }
       }
-    }
 
-    if (replacements.length > 0) {
-      try { await runtimeContext.rewriteTranscriptEntries({ replacements }); }
-      catch (_) { /* best effort */ }
+      // Telemetry
+      if (this.config.enableTelemetry) {
+        this._broadcast({
+          type: 'ASSEMBLE',
+          sessionId,
+          messageCount: messages.length,
+          typeCounts,
+          totalSavedChars,
+          lifetimeCharsSaved: stats.totalCharsSaved,
+          lifetimeTruncated: stats.totalTruncated,
+          lifetimeAssembles: stats.totalAssembleCalls,
+        });
+      }
+
+      if (totalSavedChars > 0) {
+        const summaryParts = Object.entries(typeCounts)
+          .filter(([, v]) => v.truncated > 0)
+          .map(([k, v]) => `${k}: ${v.truncated} truncated (${v.charsSaved} chars saved)`)
+          .join(', ');
+        console.log(`[ContextClaw] ${summaryParts}`);
+      }
+
+      return {
+        messages: kept,
+        estimatedTokens: 0, // not our job to estimate — gateway handles this
+      };
+    } catch (e) {
+      console.error('[ContextClaw] assemble error:', e);
+      return { messages, estimatedTokens: 0 };
     }
+  }
+
+  async compact() {
+    return { ok: true, compacted: false, reason: 'ContextClaw uses type-based truncation, not compaction' };
+  }
+
+  async afterTurn() {
+    // No post-turn processing needed — truncation happens at assemble time
   }
 
   async maintain() {
@@ -404,14 +251,20 @@ class ContextClawEngine {
 
   async dispose() {
     this._sessions.clear();
-    if (wss) { wss.close(); wss = null; }
+    if (this.wss) {
+      try { this.wss.close(); } catch (_) {}
+      this.wss = null;
+    }
   }
 }
 
-// ---------------------------------------------------------------------------
+// -------------------------------------------------------
 // Plugin registration
-// ---------------------------------------------------------------------------
+// -------------------------------------------------------
 
 export default function setup(runtime) {
-  runtime.registerContextEngine('contextclaw', () => new ContextClawEngine());
+  const config = runtime.pluginConfig || {};
+  runtime.registerContextEngine('contextclaw', () => new ContextClawEngine(config));
 }
+
+export { ContextClawEngine, computeTurnsAgo };

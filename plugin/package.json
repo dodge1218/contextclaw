@@ -1,15 +1,19 @@
 {
   "name": "contextclaw-plugin",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "main": "index.js",
   "openclaw": {
-    "extensions": [
-      "./index.js"
-    ]
+    "extensions": ["./index.js"],
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2",
+      "minGatewayVersion": "2026.3.24-beta.2"
+    }
   },
   "dependencies": {
-    "tiktoken": "^1.0.22",
     "ws": "^8.20.0"
+  },
+  "scripts": {
+    "test": "node --test __tests__/*.test.js"
   }
 }
