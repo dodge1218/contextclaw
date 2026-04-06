@@ -132,10 +132,12 @@ function scoreMessage(msg, index, total, topicKeywords) {
     : 0;
   score += relevance;
 
-  // 4. Size penalty: bloated tool outputs are eviction candidates
+  // 4. Size penalty: bloated tool outputs are prime eviction candidates
   const tokens = messageTokens(msg);
-  if (tokens > 5000) score -= 0.1;
-  if (tokens > 20000) score -= 0.2;
+  if (tokens > 2000) score -= 0.15;
+  if (tokens > 5000) score -= 0.25;
+  if (tokens > 10000) score -= 0.35;
+  if (tokens > 20000) score -= 0.5;
 
   return score;
 }
