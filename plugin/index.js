@@ -145,7 +145,10 @@ class ContextClawEngine {
   }
 
   async assemble({ sessionId, messages, tokenBudget, prompt }) {
+    // Dynamic budget: use provider budget if available, else 55K
     if (!tokenBudget) tokenBudget = 55000;
+    // Target: always compact to 60% of budget to stay lean
+    const target = tokenBudget * 0.6;
 
     // Score all messages
     const scored = messages.map((msg, i) => ({
@@ -158,23 +161,13 @@ class ContextClawEngine {
     // Calculate total
     const totalTokens = scored.reduce((s, m) => s + m.tokens, 0);
 
-    // If under budget, pass everything through
-    if (totalTokens <= tokenBudget) {
-      return {
-        messages,
-        estimatedTokens: totalTokens,
-      };
-    }
-
-    // Over budget — evict lowest-scored messages until we fit
-    // Sort by score ascending (lowest = evict first), but preserve order for output
+    // ALWAYS prune on every turn — evict lowest-scored until under target
     const evictOrder = [...scored]
       .filter(s => s.score < 999) // never evict system
       .sort((a, b) => a.score - b.score);
 
     const evicted = new Set();
     let currentTokens = totalTokens;
-    const target = tokenBudget * 0.85; // compact to 85% to avoid thrashing
 
     for (const item of evictOrder) {
       if (currentTokens <= target) break;
