@@ -15,8 +15,14 @@ import { homedir } from 'node:os';
 import { WebSocketServer } from 'ws';
 
 // ---------------------------------------------------------------------------
-// Config
+// Lifetime stats — track total tokens saved
 // ---------------------------------------------------------------------------
+
+const stats = {
+  totalEvicted: 0,
+  totalTokensSaved: 0,
+  totalAssembleCalls: 0,
+};
 
 const COLD_DIR = join(homedir(), '.openclaw', 'workspace', 'memory', 'cold');
 const TARGET_RATIO = 0.35;   // keep context at 35% of budget — our token estimates are ~2x under real count
@@ -241,6 +247,8 @@ class ContextClawEngine {
 
     console.log(`[ContextClaw] assemble called: ${messages.length} msgs, budget=${tokenBudget}, target=${target}`);
 
+    stats.totalAssembleCalls++;
+
     // Step 1: What is the user talking about right now?
     const topicKeywords = getTopicKeywords(messages);
 
@@ -289,11 +297,20 @@ class ContextClawEngine {
       evictedCount: evictedMsgs.length,
       budget: tokenBudget,
       topicKeywords: [...topicKeywords].slice(0, 10),
+      lifetimeTokensSaved: stats.totalTokensSaved,
+      lifetimeEvictions: stats.totalEvicted,
+      lifetimeAssembles: stats.totalAssembleCalls,
     });
 
-    const s = this._sessions.get(sessionId) || { turns: 0, evictions: 0 };
     s.evictions += evictedMsgs.length;
+    const tokensSaved = totalTokens - keptTokens;
+    stats.totalEvicted += evictedMsgs.length;
+    stats.totalTokensSaved += tokensSaved;
     this._sessions.set(sessionId, s);
+
+    if (evictedMsgs.length > 0) {
+      console.log(`[ContextClaw] evicted ${evictedMsgs.length} msgs, saved ${tokensSaved} tokens this turn | lifetime: ${stats.totalTokensSaved} tokens saved across ${stats.totalAssembleCalls} turns`);
+    }
 
     return {
       messages: kept,
