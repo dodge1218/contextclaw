@@ -2,3 +2,4 @@ node_modules/
 dist/
 .contextclaw-memory/
 *.tsbuildinfo
+node_modules/
