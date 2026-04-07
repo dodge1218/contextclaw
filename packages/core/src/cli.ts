@@ -119,7 +119,7 @@ async function main() {
 
     case 'status': {
       const watcher = new SessionWatcher();
-      const analysis = watcher.analyzeCurrentSession();
+      const analysis = await watcher.analyzeCurrentSession();
 
       if (!analysis) {
         console.log('No active session found.');

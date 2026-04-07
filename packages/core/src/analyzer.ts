@@ -1,6 +1,7 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { createReadStream, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { createInterface } from 'node:readline';
 
 const SESSIONS_DIR = join(homedir(), '.openclaw', 'agents', 'main', 'sessions');
 
@@ -34,16 +35,23 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-function analyzeFile(path: string): SessionStats {
-  const raw = readFileSync(path, 'utf-8');
-  const lines = raw.split('\n').filter(Boolean);
-
+async function analyzeFile(path: string): Promise<SessionStats> {
   let totalInput = 0, totalOutput = 0, cacheRead = 0, cacheWrite = 0, totalCost = 0;
   let turnsWithUsage = 0, messages = 0;
   const models: Record<string, number> = {};
   const heaviest: SessionStats['heaviest'] = [];
 
-  for (const line of lines) {
+  const stat = statSync(path);
+  const sizeKB = stat.size / 1024;
+
+  // Stream line-by-line to avoid OOM on large sessions
+  const rl = createInterface({
+    input: createReadStream(path, { encoding: 'utf-8' }),
+    crlfDelay: Infinity,
+  });
+
+  for await (const line of rl) {
+    if (!line.trim()) continue;
     let d: any;
     try { d = JSON.parse(line); } catch { continue; }
     if (d.type !== 'message') continue;
@@ -80,7 +88,6 @@ function analyzeFile(path: string): SessionStats {
 
   heaviest.sort((a, b) => b.tokens - a.tokens);
 
-  const sizeKB = statSync(path).size / 1024;
   const redundancyPct = (cacheRead / Math.max(totalInput + cacheRead, 1)) * 100;
 
   return {
@@ -148,7 +155,7 @@ export async function analyzeSession(target: string): Promise<void> {
 
   for (const f of files) {
     try {
-      const stats = analyzeFile(f);
+      const stats = await analyzeFile(f);
       printStats(stats);
     } catch (err: any) {
       console.error(`Error analyzing ${f}: ${err.message}`);

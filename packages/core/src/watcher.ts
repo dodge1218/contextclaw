@@ -8,10 +8,11 @@
  *   Storage backend is pluggable — local fs now, SSH/tunnel later.
  */
 
-import { watch, readFileSync, readdirSync, statSync } from 'fs';
+import { createReadStream, readdirSync, statSync } from 'fs';
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { join, basename } from 'path';
 import { homedir } from 'os';
+import { createInterface } from 'readline';
 import { countTokens } from './budget.js';
 
 export interface WatcherConfig {
@@ -85,35 +86,77 @@ export class SessionWatcher {
   }
 
   /**
-   * Parse a session JSONL and compute per-turn token estimates.
+   * Parse a session JSONL via streaming to avoid OOM on large files.
+   * Falls back to sync read for small files (<1MB) for speed.
+   */
+  async parseSessionAsync(filePath: string): Promise<SessionTurn[]> {
+    const stat = statSync(filePath);
+    
+    // Small files: read directly (fast path, <1MB)
+    if (stat.size < 1_000_000) {
+      const { readFileSync } = await import('fs');
+      const raw = readFileSync(filePath, 'utf-8');
+      return this._parseLinesSync(raw.split('\n'));
+    }
+
+    // Large files: stream line-by-line to avoid OOM
+    const turns: SessionTurn[] = [];
+    const rl = createInterface({
+      input: createReadStream(filePath, { encoding: 'utf-8' }),
+      crlfDelay: Infinity,
+    });
+
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const turn = this._parseLine(trimmed);
+      if (turn) turns.push(turn);
+    }
+
+    return turns;
+  }
+
+  /**
+   * Sync parse (kept for backward compat, delegates to async internally).
+   * @deprecated Use parseSessionAsync instead.
    */
   parseSession(filePath: string): SessionTurn[] {
+    const { readFileSync } = require('fs');
     const raw = readFileSync(filePath, 'utf-8');
-    const lines = raw.split('\n').filter(l => l.trim());
+    return this._parseLinesSync(raw.split('\n'));
+  }
+
+  private _parseLinesSync(lines: string[]): SessionTurn[] {
     const turns: SessionTurn[] = [];
-
     for (const line of lines) {
-      try {
-        const entry = JSON.parse(line);
-        if (entry.type !== 'message' || !entry.message) continue;
-        const msg = entry.message;
-        const content = typeof msg.content === 'string'
-          ? msg.content
-          : JSON.stringify(msg.content ?? '');
-
-        turns.push({
-          role: msg.role ?? 'unknown',
-          content,
-          tokens: msg.usage?.totalTokens ?? countTokens(content),
-          type: this.classifyTurn(msg),
-          timestamp: entry.timestamp ?? '',
-          usage: msg.usage,
-        });
-      } catch {
-        // skip malformed lines
-      }
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const turn = this._parseLine(trimmed);
+      if (turn) turns.push(turn);
     }
     return turns;
+  }
+
+  private _parseLine(line: string): SessionTurn | null {
+    try {
+      const entry = JSON.parse(line);
+      if (entry.type !== 'message' || !entry.message) return null;
+      const msg = entry.message;
+      const content = typeof msg.content === 'string'
+        ? msg.content
+        : JSON.stringify(msg.content ?? '');
+
+      return {
+        role: msg.role ?? 'unknown',
+        content,
+        tokens: msg.usage?.totalTokens ?? countTokens(content),
+        type: this.classifyTurn(msg),
+        timestamp: entry.timestamp ?? '',
+        usage: msg.usage,
+      };
+    } catch {
+      return null;
+    }
   }
 
   private classifyTurn(msg: any): string {
@@ -134,18 +177,18 @@ export class SessionWatcher {
   /**
    * Analyze current session and return a diagnostic report.
    */
-  analyzeCurrentSession(): {
+  async analyzeCurrentSession(): Promise<{
     sessionFile: string;
     turnCount: number;
     estimatedContextTokens: number;
     breakdown: Record<string, { count: number; tokens: number }>;
     bloatSources: { type: string; tokens: number; preview: string }[];
     recommendation: 'ok' | 'warn' | 'compact-now';
-  } | null {
+  } | null> {
     const sessionPath = this.findActiveSession();
     if (!sessionPath) return null;
 
-    const turns = this.parseSession(sessionPath);
+    const turns = await this.parseSessionAsync(sessionPath);
     const breakdown: Record<string, { count: number; tokens: number }> = {};
     const bloatSources: { type: string; tokens: number; preview: string }[] = [];
 
@@ -200,7 +243,7 @@ export class SessionWatcher {
     const path = sessionPath ?? this.findActiveSession();
     if (!path) return { keep: [], flush: [], estimatedSavings: 0 };
 
-    const turns = this.parseSession(path);
+    const turns = await this.parseSessionAsync(path);
     const keep: { type: string; preview: string; tokens: number }[] = [];
     const flush: { type: string; preview: string; tokens: number; reason: string }[] = [];
 
@@ -274,7 +317,7 @@ export class SessionWatcher {
     this.checkAndAlert();
 
     // Poll for changes (more reliable than fs.watch across platforms)
-    this.pollTimer = setInterval(() => {
+    this.pollTimer = setInterval(async () => {
       if (!this.running) return;
       try {
         const currentSession = this.findActiveSession();
@@ -287,7 +330,7 @@ export class SessionWatcher {
         const stat = statSync(this.activeSessionPath);
         if (stat.size !== this.lastSize) {
           this.lastSize = stat.size;
-          this.checkAndAlert();
+          await this.checkAndAlert();
         }
       } catch {
         // session file may be temporarily unavailable
@@ -300,8 +343,8 @@ export class SessionWatcher {
     if (this.pollTimer) clearInterval(this.pollTimer);
   }
 
-  private checkAndAlert(): void {
-    const analysis = this.analyzeCurrentSession();
+  private async checkAndAlert(): Promise<void> {
+    const analysis = await this.analyzeCurrentSession();
     if (!analysis) return;
 
     const ctx = analysis.estimatedContextTokens;

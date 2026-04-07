@@ -1,12 +1,16 @@
-import { writeFile, mkdir, readFile, readdir } from 'fs/promises';
+import { writeFile, mkdir, readFile, readdir, stat, unlink } from 'fs/promises';
 import { join } from 'path';
 import type { ContextBlock } from './types.js';
 
 export class MemoryStore {
   private dir: string;
+  private maxFiles: number;
+  private maxAgeDays: number;
 
-  constructor(dir: string) {
+  constructor(dir: string, opts?: { maxFiles?: number; maxAgeDays?: number }) {
     this.dir = dir;
+    this.maxFiles = opts?.maxFiles ?? 500;
+    this.maxAgeDays = opts?.maxAgeDays ?? 7;
   }
 
   async init(): Promise<void> {
@@ -32,6 +36,10 @@ export class MemoryStore {
       ].join('\n');
 
       await writeFile(path, content, 'utf-8');
+      
+      // Rotate old evicted files to prevent unbounded accumulation
+      await this.rotate();
+      
       return path;
     } catch (err) {
       console.error(`[ContextClaw] Failed to flush block ${block.id}:`, err);
@@ -64,5 +72,59 @@ export class MemoryStore {
     }
 
     return results.sort((a, b) => b.score - a.score).slice(0, maxResults);
+  }
+
+  /**
+   * Rotate old evicted files: remove files older than maxAgeDays,
+   * and keep at most maxFiles (oldest first).
+   */
+  async rotate(): Promise<number> {
+    try {
+      const files = await readdir(this.dir);
+      const evicted = files.filter(f => f.startsWith('evicted-') && f.endsWith('.md'));
+      
+      if (evicted.length <= this.maxFiles) return 0;
+      
+      // Get stats and sort oldest first
+      const withStats = await Promise.all(
+        evicted.map(async f => {
+          const path = join(this.dir, f);
+          try {
+            const s = await stat(path);
+            return { file: f, path, mtimeMs: s.mtimeMs };
+          } catch {
+            return null;
+          }
+        })
+      );
+      
+      const valid = withStats.filter(Boolean) as { file: string; path: string; mtimeMs: number }[];
+      valid.sort((a, b) => a.mtimeMs - b.mtimeMs);
+      
+      let removed = 0;
+      const cutoff = Date.now() - (this.maxAgeDays * 86400000);
+      
+      for (const entry of valid) {
+        // Remove if over max files OR older than maxAgeDays
+        const overLimit = (valid.length - removed) > this.maxFiles;
+        const expired = entry.mtimeMs < cutoff;
+        
+        if (overLimit || expired) {
+          try {
+            await unlink(entry.path);
+            removed++;
+          } catch {
+            // ignore individual delete failures
+          }
+        }
+      }
+      
+      if (removed > 0) {
+        console.log(`[ContextClaw] Memory rotation: removed ${removed} old evicted files`);
+      }
+      return removed;
+    } catch {
+      return 0;
+    }
   }
 }
