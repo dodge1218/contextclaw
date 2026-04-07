@@ -10,3 +10,6 @@ memory
 outputs
 HN-REVIEW.md
 PRD-ADDITIONS.md
+plugin/node_modules
+eval/node_modules
+node_modules
