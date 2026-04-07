@@ -8,7 +8,7 @@ import { ContextClawEngine, computeTurnsAgo } from '../plugin/index.js';
 import { classifyAll } from '../plugin/classifier.js';
 import { applyPolicy } from '../plugin/policy.js';
 
-const CORPUS = '/home/yin/.openclaw/workspace/corpus';
+const CORPUS = process.env.CONTEXTCLAW_CORPUS || './eval/transcripts';
 
 // Pick the heaviest sessions (most messages)
 function findSessions(limit = 5) {

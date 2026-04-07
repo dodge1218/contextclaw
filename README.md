@@ -54,7 +54,7 @@ cd plugin && npm install
 ## Project Structure
 
 ```
-plugin/           # Production plugin (685 lines, 36 tests)
+plugin/           # Production plugin (~700 lines, 36 tests)
 ├── classifier.js # Content type classification
 ├── policy.js     # Retention rules + truncation
 ├── index.js      # OpenClaw engine integration
