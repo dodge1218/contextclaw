@@ -7,7 +7,7 @@
  * MIT — https://github.com/dodge1218/contextclaw
  */
 
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { WebSocketServer } from 'ws';
@@ -15,15 +15,27 @@ import { classifyAll, TYPES } from './classifier.js';
 import { applyPolicy, DEFAULT_POLICIES } from './policy.js';
 
 // -------------------------------------------------------
-// Lifetime stats
+// Lifetime stats — persisted across restarts
 // -------------------------------------------------------
 
-const stats = {
-  totalTruncated: 0,
-  totalCharsSaved: 0,
-  totalAssembleCalls: 0,
-  byType: {},
-};
+const STATS_PATH = join(homedir(), '.openclaw', '.contextclaw-stats.json');
+
+function loadLifetimeStats() {
+  try {
+    const raw = readFileSync(STATS_PATH, 'utf-8');
+    const prev = JSON.parse(raw);
+    return {
+      totalTruncated: prev.truncated || 0,
+      totalCharsSaved: prev.saved || 0,
+      totalAssembleCalls: prev.assembles || 0,
+      byType: {},
+    };
+  } catch {
+    return { totalTruncated: 0, totalCharsSaved: 0, totalAssembleCalls: 0, byType: {} };
+  }
+}
+
+const stats = loadLifetimeStats();
 
 // Default config
 const DEFAULT_CONFIG = {
@@ -227,10 +239,9 @@ class ContextClawEngine {
         console.log(`[ContextClaw] ${summaryParts}`);
       }
 
-      // Write stats file for TUI footer
+      // Write stats file for TUI footer (lifetime accumulator — survives restarts)
       try {
-        const statsPath = join(homedir(), '.openclaw', '.contextclaw-stats.json');
-        writeFileSync(statsPath, JSON.stringify({
+        writeFileSync(STATS_PATH, JSON.stringify({
           saved: stats.totalCharsSaved,
           truncated: stats.totalTruncated,
           assembles: stats.totalAssembleCalls,
