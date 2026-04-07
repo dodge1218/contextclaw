@@ -20,6 +20,8 @@ Running on our own OpenClaw instance (11,300 items across 6 real sessions):
 | Error traces | 326 | 1.9M | 0.1M | **93.6%** |
 | **Total** | **11,300** | **45.5M** | **5.5M** | **87.9%** |
 
+![ContextClaw saving 956K tokens in OpenClaw TUI](assets/tui-tokens-saved.png)
+
 That's ~10M tokens saved. At Claude Opus rates ($15/MTok input), that's **~$150 not spent**.
 
 ![ContextClaw live in the OpenClaw TUI — 956K tokens saved](assets/tui-tokens-saved.png)
@@ -73,13 +75,13 @@ npm install contextclaw
 
 ```bash
 # Check your current session's context health
-npx contextclaw status
+npx cc status
 
 # Watch and auto-alert when context is bloated
-npx contextclaw watch
+npx cc watch
 
 # Analyze token usage across all sessions
-npx contextclaw analyze
+npx cc analyze
 ```
 
 ### As an OpenClaw Plugin

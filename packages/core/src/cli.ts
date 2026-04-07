@@ -13,7 +13,7 @@ function showHelp() {
   console.log(`
 ContextClaw — Context orchestration for OpenClaw agents
 
-Usage: contextclaw <command> [options]
+Usage: cc <command> [options]
 
 Commands:
   analyze [current|all|<file>]  Token usage breakdown for sessions
@@ -31,13 +31,13 @@ Options (watch):
   --tool-max <tokens>   Max tokens per tool result (default: 2000)
 
 Examples:
-  contextclaw analyze                 Analyze current session
-  contextclaw analyze all             Compare recent sessions
-  contextclaw watch                   Start monitoring daemon
-  contextclaw watch --warn 30000      Custom warn threshold
-  contextclaw compact                 Show what would be flushed
-  contextclaw compact --execute       Actually flush to cold storage
-  contextclaw status                  Quick health check
+  cc analyze                 Analyze current session
+  cc analyze all             Compare recent sessions
+  cc watch                   Start monitoring daemon
+  cc watch --warn 30000      Custom warn threshold
+  cc compact                 Show what would be flushed
+  cc compact --execute       Actually flush to cold storage
+  cc status                  Quick health check
 `);
 }
 
