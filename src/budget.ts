@@ -2,7 +2,13 @@ import { get_encoding, type Tiktoken } from 'tiktoken';
 import type { ContextBlock } from './types.js';
 
 let encoder: Tiktoken | null = null;
-let heuristicWarned = false;
+let warnedHeuristicFallback = false;
+
+function warnHeuristicCounter() {
+  if (warnedHeuristicFallback) return;
+  warnedHeuristicFallback = true;
+  console.warn('[ContextClaw] tiktoken unavailable, using heuristic token counting (~4 chars/token)');
+}
 
 function getEncoder(): Tiktoken | null {
   if (encoder) return encoder;
@@ -21,12 +27,10 @@ export function countTokens(text: string): number {
       return enc.encode_ordinary(text).length;
     } catch {
       // If encoding fails for any reason, fall through to heuristic estimate
+      warnHeuristicCounter();
     }
-  }
-
-  if (!heuristicWarned) {
-    console.warn('[ContextClaw] tiktoken unavailable, using heuristic token counting (~4 chars/token)');
-    heuristicWarned = true;
+  } else {
+    warnHeuristicCounter();
   }
 
   // Rough heuristic: 4 characters per token
