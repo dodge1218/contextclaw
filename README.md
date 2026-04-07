@@ -22,6 +22,9 @@ Running on our own OpenClaw instance (11,300 items across 6 real sessions):
 
 That's ~10M tokens saved. At Claude Opus rates ($15/MTok input), that's **~$150 not spent**.
 
+![ContextClaw live in the OpenClaw TUI — 956K tokens saved](assets/tui-tokens-saved.png)
+*Live savings counter running in the OpenClaw TUI footer*
+
 The key insight: **JSON schemas and file reads are 55% of all context waste**, and they compress at 92-95% with zero information loss.
 
 ### Controlled Eval (4 real sessions, .reset files)
