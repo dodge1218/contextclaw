@@ -63,8 +63,26 @@ No LLM calls. No embeddings. Pure pattern matching + byte counting. Zero latency
 ## Install
 
 ```bash
-# As an OpenClaw plugin
-cd plugin && npm install
+npm install contextclaw
+```
+
+### Quick Start — Try on Your Session
+
+```bash
+# Check your current session's context health
+npx contextclaw status
+
+# Watch and auto-alert when context is bloated
+npx contextclaw watch
+
+# Analyze token usage across all sessions
+npx contextclaw analyze
+```
+
+### As an OpenClaw Plugin
+
+```bash
+cd ~/.openclaw/workspace/contextclaw/plugin && npm install
 # Enable in openclaw.json → plugins.slots.contextEngine: "contextclaw"
 ```
 
@@ -113,7 +131,7 @@ They're complementary. Caching reduces cost on the static prefix. ContextClaw re
 - [x] CI pipeline (66 tests across plugin + core)
 - [x] Live dogfooding with telemetry
 - [x] Cold storage for evicted content
-- [ ] npm publish (`contextclaw` on npm)
+- [x] npm publish (`contextclaw` on npm) ✅ v1.0.1
 - [ ] Standalone adapters (LangChain, Cline)
 - [ ] Auto-rehydration from cold storage
 - [ ] Studio dashboard (real-time token visualization)
