@@ -94,5 +94,43 @@
 - [ ] Respond to HN feedback
 - [ ] Split monorepo: @contextclaw/core + @contextclaw/openclaw-plugin
 - [ ] Session indexer (port icepie_index to TS)
-- [ ] LangChain adapter investigation
 - [ ] Community issue triage
+
+---
+
+## Decisions — 2026-04-07 Evening Session
+
+### We are NOT building framework adapters ourselves
+- LangChain, Cline, CrewAI, AutoGen adapters = community-maintained
+- README updated with "Wanted: Framework Adapter Maintainers" section
+- Core engine is already framework-agnostic — adapter interface is ~50 lines
+- We focus on core engine quality, community builds the bridges
+
+### Renamed CLI: `contextclaw` → `cc`
+- 2-letter command, less cognitive load
+- npm package name stays `contextclaw`, just the bin is `cc`
+- Commit: `36d1715`
+
+### Confirmed Build Order (what WE build)
+1. **Fix bugs** — content.flatMap crash, token estimate accuracy (P0)
+2. **Sticker system (v2)** — task-scoped retrieval, the real innovation
+3. **Content-addressable dedup** — hash-based, easy high-impact
+4. **Auto-rehydration** — pull from cold storage when agent needs evicted content
+5. **Studio dashboard** — only after 1-4 ship + real adoption
+6. **Multi-agent protocol** — RFC exists, impl deferred
+
+### Content Publishing Learnings
+- Don't spam-post articles. Cron-queue 1/day per platform.
+- Dev.to rate limit: 2 posts then 300s cooldown
+- Build articles in advance, schedule per platform limits
+
+---
+
+## Ideal Additions (append as ideas come)
+
+_Add future ideas below. Tag with date and source._
+
+- `[2026-04-07]` Per-prompt savings widget — the "$4.38 saved" inline display. Viral screenshot material.
+- `[2026-04-07]` Knowledge graph compression (v3) — replace evicted messages with concept nodes. 30x compression.
+- `[2026-04-07]` Prompt Vault Chrome extension — clipboard history for agent prompts
+- `[2026-04-07]` Session index builder — 300x compression on session history (ICE/PIE port to TS)

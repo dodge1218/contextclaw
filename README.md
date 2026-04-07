@@ -137,10 +137,22 @@ They're complementary. Caching reduces cost on the static prefix. ContextClaw re
 - [x] Live dogfooding with telemetry
 - [x] Cold storage for evicted content
 - [x] npm publish (`contextclaw` on npm) ✅ v1.0.1
-- [ ] Standalone adapters (LangChain, Cline)
 - [ ] Auto-rehydration from cold storage
+- [ ] Sticker system — task-scoped context retrieval (v2)
+- [ ] Content-addressable dedup (hash-based, same file = store once)
 - [ ] Studio dashboard (real-time token visualization)
 - [ ] Multi-agent shared context protocol ([RFC](docs/MULTI_AGENT_PROTOCOL.md))
+
+### 🤝 Wanted: Framework Adapter Maintainers
+
+The core engine (`packages/core/`) is framework-agnostic TypeScript. We'd love community-maintained adapters for:
+
+- **LangChain** / LangGraph
+- **Cline**
+- **CrewAI**
+- **AutoGen**
+
+If you use one of these and want to help, open an issue or PR. The adapter interface is ~50 lines.
 
 ## Contributing
 
