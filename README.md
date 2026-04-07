@@ -1,137 +1,96 @@
 # 🧠 ContextClaw
 
-![CI](https://github.com/dodge1218/contextclaw/actions/workflows/ci.yml/badge.svg)
+[![CI](https://github.com/dodge1218/contextclaw/actions/workflows/ci.yml/badge.svg)](https://github.com/dodge1218/contextclaw/actions/workflows/ci.yml)
 
-**Stop sending Dockerfiles to the LLM 30 turns after you read them.**
+**Stop sending Dockerfiles to your LLM 30 turns after you read them.**
 
-Context management plugin for [OpenClaw](https://github.com/openclaw/openclaw). Classifies every item in your context window by content type and applies retention policies. Files get truncated. Command output gets tailed. Your actual conversation stays intact.
+Context management plugin for [OpenClaw](https://github.com/openclaw/openclaw). Classifies every item in your context window by content type and applies retention policies. Files get truncated. Command output gets tailed. Your conversation stays intact.
 
-## The Problem
+## Real-World Results
 
-A typical 50-turn agent session accumulates:
+Tested on 5 production autonomous agent sessions (69-98 messages each):
 
-| Source | Tokens | After ContextClaw |
-|--------|--------|-------------------|
-| 10 file reads | ~50,000 | ~3,000 |
-| 15 command outputs | ~25,000 | ~2,000 |
-| 5 config dumps | ~8,000 | ~500 |
-| 4 error traces | ~6,000 | ~400 |
-| 30 metadata envelopes | ~9,000 | 0 |
-| **Total** | **~98,000** | **~5,900 (94% reduction)** |
+| Metric | Value |
+|--------|-------|
+| Avg token reduction | **55.8%** |
+| Best case (tool-heavy session) | **65.9%** |
+| Items truncated prematurely (re-read risk) | **0** |
+| Processing time | **<15ms** per session |
 
-Your user messages and conversation? ~8,000 tokens. That was never the problem.
+What gets cut: stale file reads, old command output, search results from 10 turns ago, error traces after they're resolved. What stays: your conversation, system prompt, recent tool results.
 
 ## How It Works
 
 ```
-message arrives → classify type → check turn age → apply policy → assemble
+Message arrives → Classify content type → Check retention policy → Truncate or keep
 ```
 
-### Content Types & Policies
+11 content types, each with its own retention rule:
 
-| Type | Tag | Policy |
-|------|-----|--------|
-| System prompt | 🟣 | Never touch |
-| User message | 🔵 | Keep last 5 verbatim, strip older metadata |
-| Assistant reply | 🟢 | Keep last 3, trim older |
-| File read | 🟠 | Full for 1 turn, then first+last 100 chars |
-| Command output | 🟠 | Full for 1 turn, then last 20 lines |
-| Image/media | 🔴 | Pointer only ("screenshot.jpg"), drop binary |
-| Config dump | 🔴 | Full for 1 turn, then key fields only |
-| Error trace | 🟡 | Keep 2 turns, then error line only |
-| JSON/schema blob | 🔴 | Full for 1 turn, then truncate to 500 chars |
+| Type | Rule |
+|------|------|
+| `system-prompt` | Never touch |
+| `user-message` | Keep last 5 turns full, metadata-strip older |
+| `assistant-reply` | Keep last 3 turns, trim narration |
+| `tool-file-read` | Keep 1 turn, then truncate to bookends |
+| `tool-cmd-output` | Exit code + last 20 lines after 1 turn |
+| `image/media` | Pointer only, drop base64 |
+| `config-dump` | Truncate to 500 chars |
+| `error-trace` | Keep 2 turns, then discard |
+| `json/schema` | Truncate to 500 chars |
+| `tool-search-result` | Summary after 1 turn |
+| `tool-generic` | Tail after 2 turns |
 
-### What It Doesn't Do
-
-- No relevance scoring (wrong problem — bulk content types are the waste, not message relevance)
-- No embeddings (overkill for type-based truncation)
-- No model calls (zero latency, zero cost)
-- No summarization (pure pattern matching + truncation)
-- Doesn't fight native compaction (`ownsCompaction: false`)
+No LLM calls. No embeddings. Pure pattern matching. Zero latency, zero cost.
 
 ## Install
 
 ```bash
-cd ~/.openclaw/plugins
-git clone https://github.com/dodge1218/contextclaw.git
-cd contextclaw/plugin && npm install
+# As an OpenClaw plugin
+cd plugin && npm install
+# Enable in openclaw.json → plugins
 ```
 
-Add to `openclaw.yaml`:
-
-```yaml
-plugins:
-  load:
-    paths:
-      - ~/.openclaw/plugins/contextclaw/plugin
-  slots:
-    contextEngine: contextclaw
-  entries:
-    contextclaw:
-      enabled: true
-      config:
-        coldStorageDir: ~/.openclaw/workspace/memory/cold
-        wsPort: 41234
-        enableTelemetry: true
-```
-
-Restart OpenClaw.
-
-## Configuration
-
-Override per-type policies:
-
-```yaml
-contextclaw:
-  config:
-    policies:
-      tool-file-read:
-        keepTurns: 2          # keep files for 2 turns instead of 1
-        maxCharsAfter: 500    # bigger bookends
-      tool-cmd-output:
-        tailLines: 30         # keep last 30 lines instead of 20
-```
-
-## Architecture
+## Project Structure
 
 ```
-plugin/
-├── classifier.js     # Content type detection (pattern matching)
-├── policy.js         # Per-type retention rules + truncation extractors
-├── index.js          # Engine: classify → policy → assemble
-└── __tests__/        # 36 tests
+plugin/           # Production plugin (685 lines, 36 tests)
+├── classifier.js # Content type classification
+├── policy.js     # Retention rules + truncation
+├── index.js      # OpenClaw engine integration
+└── __tests__/    # node:test suite
+
+packages/core/    # Framework-agnostic core (v2, in development)
+├── src/          # TypeScript implementation
+└── __tests__/    # vitest suite (28 tests)
+
+eval/             # Benchmarks + real-world eval
+studio/           # React dashboard (WIP)
+docs/             # Multi-agent protocol RFC
 ```
 
-**675 lines of source. 373 lines of tests. Zero dependencies beyond `ws`.**
+## Why Not Just Use Prompt Caching?
 
-Cold storage lives at `~/.openclaw/workspace/memory/cold/` as `.jsonl` files — truncated content with metadata for potential rehydration.
+| | Anthropic Caching | ContextClaw |
+|---|---|---|
+| What it does | Caches static prefix (system prompt, tools) | Removes stale content from the dynamic portion |
+| Conversation history | Still re-sent in full every turn | Truncated by content type + age |
+| Token reduction | 0% on conversation | 55-66% on real sessions |
+| Works with | Anthropic only | Any provider |
 
-## vs. Prompt Caching
-
-| | Raw Context | Anthropic Prompt Cache | ContextClaw | Both |
-|---|---|---|---|---|
-| Static prefix (system prompt) | Full price | **90% savings** | No change | **90% savings** |
-| File read from 20 turns ago | Full price | Full price (not prefix) | **Evicted** | **Evicted** |
-| 35K config dump (turn 2 of 50) | 35K tokens all 50 turns | 35K cached but still in context | **~200 chars after turn 3** | **~200 chars** |
-| Context overflow → compaction | Lossy, loses decisions | **Prevents overflow** | **Prevents overflow** | **Prevents overflow** |
-| Works on non-Anthropic providers | N/A | ❌ | ✅ | N/A |
-
-**They're complementary.** Prompt caching saves money on tokens you *should* send. ContextClaw saves money on tokens you *shouldn't* send.
-
-## Tests
-
-```
-47 tests passing
-├── src/__tests__/   11 vitest tests (budget, circuit-breaker)
-└── plugin/__tests__/ 36 node:test tests (classifier, policy, engine)
-```
+They're complementary. Caching reduces cost on the static prefix. ContextClaw reduces what's in the dynamic payload. Use both.
 
 ## Roadmap
 
-- **v2:** Task/project stickers — tag context by project+task, load only relevant history
-- **v2:** Intent extractor as standalone plugin
-- **v2:** Auto-rehydration from cold storage
-- **v3:** Cross-framework `@contextclaw/core` extraction
+- [x] Content-type classification (11 types)
+- [x] Per-type retention policies
+- [x] Real-world eval on production sessions
+- [x] CI pipeline
+- [ ] npm publish (`@contextclaw/core` for framework-agnostic use)
+- [ ] Sticker/tagging system (per-project context indexing)
+- [ ] Auto-rehydration from cold storage
+- [ ] Studio dashboard (real-time token visualization)
+- [ ] Multi-agent shared context protocol ([RFC](docs/MULTI_AGENT_PROTOCOL.md))
 
 ## Contributing
 
