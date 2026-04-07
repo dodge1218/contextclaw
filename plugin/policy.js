@@ -183,6 +183,7 @@ const EXTRACTORS = {
 export function applyPolicy(msg, turnsAgo, customPolicies = {}) {
   const type = msg._type || TYPES.TOOL_GENERIC;
   const policy = { ...DEFAULT_POLICIES[type], ...customPolicies[type] };
+  const contentIsArray = Array.isArray(msg.content);
   const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
   const originalChars = content.length;
 
@@ -215,8 +216,17 @@ export function applyPolicy(msg, turnsAgo, customPolicies = {}) {
 
     // Only truncate if it actually saves something meaningful (>20%)
     if (truncated.length < originalChars * 0.8) {
+      // If original content was an array (e.g. assistant content blocks),
+      // wrap the truncated string in a text block to preserve the array contract.
+      // The gateway expects assistant .content to always be an array.
+      let truncatedContent;
+      if (msg.role === 'assistant' || contentIsArray) {
+        truncatedContent = [{ type: 'text', text: truncated }];
+      } else {
+        truncatedContent = truncated;
+      }
       return {
-        msg: { ...msg, content: truncated, _truncated: true, _originalChars: originalChars },
+        msg: { ...msg, content: truncatedContent, _truncated: true, _originalChars: originalChars },
         action: 'truncate',
         originalChars,
         savedChars: originalChars - truncated.length,

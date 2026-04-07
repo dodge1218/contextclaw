@@ -1,46 +1,88 @@
-import { OpenClawPlugin } from '@openclaw/plugin';
+import { get_encoding, type Tiktoken } from 'tiktoken';
+import type { ContextBlock } from './types.js';
 
-interface BudgetPluginOptions {
-  tokenCap: number;
+let encoder: Tiktoken | null = null;
+
+function getEncoder(): Tiktoken | null {
+  if (encoder) return encoder;
+  try {
+    encoder = get_encoding('cl100k_base');
+    return encoder;
+  } catch {
+    return null;
+  }
 }
 
-class BudgetPlugin implements OpenClawPlugin {
-  private tokenCap: number;
-  private currentTokens: number;
-  private scoringFunction: (item: any) => number;
-
-  constructor(options: BudgetPluginOptions) {
-    this.tokenCap = options.tokenCap;
-    this.currentTokens = 0;
-    this.scoringFunction = (item) => {
-      // Basic scoring function that assigns a score based on item relevance
-      return item.relevance || 0;
-    };
-  }
-
-  async initialize() {}
-
-  async addItem(item: any) {
-    if (this.currentTokens >= this.tokenCap) {
-      // If the token cap is reached, evict the item with the lowest score
-      const items = await this.getItems();
-      const lowestScoringItem = items.reduce((minItem, currentItem) => {
-        return this.scoringFunction(currentItem) < this.scoringFunction(minItem) ? currentItem : minItem;
-      }, items[0]);
-      await this.removeItem(lowestScoringItem);
+export function countTokens(text: string): number {
+  const enc = getEncoder();
+  if (enc) {
+    try {
+      return enc.encode_ordinary(text).length;
+    } catch {
+      // If encoding fails for any reason, fall through to heuristic estimate
     }
-    this.currentTokens++;
-    // Add the item to the budget
   }
 
-  async removeItem(item: any) {
-    this.currentTokens--;
-    // Remove the item from the budget
-  }
-
-  async getItems() {
-    // Return the items in the budget
-  }
+  // Rough heuristic: 4 characters per token
+  return Math.ceil(text.length / 4);
 }
 
-export { BudgetPlugin };
+export class ContextBudget {
+  private readonly blocks = new Map<string, ContextBlock>();
+
+  constructor(readonly maxTokens: number) {}
+
+  get totalTokens(): number {
+    let total = 0;
+    for (const block of this.blocks.values()) total += block.tokens;
+    return total;
+  }
+
+  get remaining(): number {
+    return Math.max(0, this.maxTokens - this.totalTokens);
+  }
+
+  get utilization(): number {
+    return this.maxTokens === 0 ? 0 : this.totalTokens / this.maxTokens;
+  }
+
+  get overBudget(): boolean {
+    return this.totalTokens > this.maxTokens;
+  }
+
+  add(block: ContextBlock): void {
+    this.blocks.set(block.id, block);
+  }
+
+  remove(id: string): ContextBlock | undefined {
+    const block = this.blocks.get(id);
+    if (block) this.blocks.delete(id);
+    return block;
+  }
+
+  reference(id: string): void {
+    const block = this.blocks.get(id);
+    if (!block) return;
+
+    block.lastReferencedAt = Date.now();
+    block.score = Math.min(1, block.score + 0.1);
+  }
+
+  getAll(): ContextBlock[] {
+    return Array.from(this.blocks.values());
+  }
+
+  getSorted(): ContextBlock[] {
+    return this.getAll().sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1;
+      if (!a.pinned && b.pinned) return 1;
+      return b.score - a.score;
+    });
+  }
+
+  getEvictionCandidates(): ContextBlock[] {
+    return this.getAll()
+      .filter(block => !block.pinned)
+      .sort((a, b) => (a.score - b.score) || (a.lastReferencedAt - b.lastReferencedAt));
+  }
+}

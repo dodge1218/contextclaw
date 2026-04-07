@@ -1,0 +1,29 @@
+{
+  "date": "2026-04-07T08:38:23.599Z",
+  "sourceFile": "eval-2026-04-07T08-38-23-541Z.json",
+  "summary": {
+    "avgScore": 102,
+    "avgPreservation": 102,
+    "avgReduction": 100
+  },
+  "details": [
+    {
+      "id": "s1",
+      "preservation": 107,
+      "reduction": 100,
+      "score": 105
+    },
+    {
+      "id": "s2",
+      "preservation": 100,
+      "reduction": 100,
+      "score": 100
+    },
+    {
+      "id": "s3",
+      "preservation": 100,
+      "reduction": 100,
+      "score": 100
+    }
+  ]
+}
