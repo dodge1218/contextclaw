@@ -21,6 +21,7 @@ Commands:
   watch                         Monitor active session, alert on bloat
   compact [--dry-run]           Generate compaction plan (flush bloat to cold storage)
   status                        Quick snapshot of current session health
+  eval [--verbose]              Run quality eval (proves compression doesn't degrade output)
   inspect                       Start inspector web UI on port 3333
   clear                         Clear the current session
   chat                          Start interactive chat (default)
@@ -31,6 +32,14 @@ Options (watch):
   --compact <tokens>    Auto-compact threshold (default: 55000)
   --tool-max <tokens>   Max tokens per tool result (default: 2000)
 
+Options (eval):
+  --sessions <n>        Max sessions to evaluate (default: 5)
+  --tasks <n>           Tasks per session (default: 3)
+  --output <path>       Output JSON path (default: quality-eval-results.json)
+  --verbose             Show per-task breakdown
+  --judge-model <m>     Judge LLM model (default: llama-3.3-70b-versatile)
+  --judge-api <url>     Judge API base (default: https://api.groq.com/openai/v1)
+
 Examples:
   cc analyze                 Analyze current session
   cc analyze all             Compare recent sessions
@@ -39,6 +48,8 @@ Examples:
   cc compact                 Show what would be flushed
   cc compact --execute       Actually flush to cold storage
   cc status                  Quick health check
+  cc eval                    Run quality eval with defaults
+  cc eval --verbose          Eval with per-task breakdown
 `);
 }
 
@@ -46,6 +57,12 @@ function parseFlag(flag: string, defaultVal: number): number {
   const idx = process.argv.indexOf(flag);
   if (idx === -1 || idx + 1 >= process.argv.length) return defaultVal;
   return parseInt(process.argv[idx + 1], 10) || defaultVal;
+}
+
+function parseStringFlag(flag: string, defaultVal: string): string {
+  const idx = process.argv.indexOf(flag);
+  if (idx === -1 || idx + 1 >= process.argv.length) return defaultVal;
+  return process.argv[idx + 1] || defaultVal;
 }
 
 async function main() {
@@ -149,6 +166,28 @@ async function main() {
           console.log(`    ${b.type}: ${b.tokens} tokens — ${b.preview.slice(0, 60)}...`);
         }
       }
+      break;
+    }
+
+    case 'eval': {
+      const { runQualityEval } = await import('./eval/runner.js');
+
+      const judgeApiKey = process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || '';
+      if (!judgeApiKey) {
+        console.error('❌ Need GROQ_API_KEY or OPENAI_API_KEY for the judge LLM.');
+        console.error('   Export one: export GROQ_API_KEY=gsk_...');
+        process.exit(1);
+      }
+
+      await runQualityEval({
+        maxSessions: parseFlag('--sessions', 5),
+        tasksPerSession: parseFlag('--tasks', 3),
+        outputPath: parseStringFlag('--output', 'quality-eval-results.json'),
+        judgeModel: parseStringFlag('--judge-model', 'llama-3.3-70b-versatile'),
+        judgeApiBase: parseStringFlag('--judge-api', 'https://api.groq.com/openai/v1'),
+        judgeApiKey,
+        verbose: process.argv.includes('--verbose'),
+      });
       break;
     }
 

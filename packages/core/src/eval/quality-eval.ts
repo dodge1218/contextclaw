@@ -16,7 +16,7 @@
  * Output: quality-eval-results.json with per-task scores and aggregate
  */
 
-import { createReadStream } from 'fs';
+import { createReadStream, statSync } from 'fs';
 import { readFile, writeFile, readdir } from 'fs/promises';
 import { join } from 'path';
 import { createInterface } from 'readline';
@@ -78,6 +78,7 @@ interface SessionMessage {
 
 /**
  * Extract messages from a session JSONL file.
+ * Handles both OpenClaw native format (type: 'message') and corpus format (user-message, assistant-reply).
  */
 async function extractMessages(sessionPath: string): Promise<SessionMessage[]> {
   const messages: SessionMessage[] = [];
@@ -90,20 +91,83 @@ async function extractMessages(sessionPath: string): Promise<SessionMessage[]> {
     if (!line.trim()) continue;
     try {
       const entry = JSON.parse(line);
-      if (entry.type !== 'message') continue;
-      const msg = entry.message ?? {};
-      const content = typeof msg.content === 'string'
-        ? msg.content
-        : Array.isArray(msg.content)
-          ? msg.content.map((c: any) => c.text || '').join('\n')
-          : '';
-      if (!content.trim()) continue;
-      messages.push({
-        role: msg.role || 'unknown',
-        content,
-        tokens: countTokens(content),
-        type: entry.__openclaw?.contentType || msg.role,
-      });
+
+      // OpenClaw native format
+      if (entry.type === 'message' && entry.message) {
+        const msg = entry.message;
+        const content = typeof msg.content === 'string'
+          ? msg.content
+          : Array.isArray(msg.content)
+            ? msg.content.map((c: any) => c.text || c.content || '').join('\n')
+            : '';
+        if (!content.trim()) continue;
+        messages.push({
+          role: msg.role || 'unknown',
+          content,
+          tokens: countTokens(content),
+          type: entry.__openclaw?.contentType || msg.role,
+        });
+        continue;
+      }
+
+      // Corpus format: user-message, assistant-reply
+      if (entry.type === 'user-message') {
+        let content = '';
+        if (typeof entry.content === 'string') {
+          try {
+            const parsed = JSON.parse(entry.content);
+            if (Array.isArray(parsed)) {
+              content = parsed.map((c: any) => c.text || c.content || '').filter(Boolean).join('\n');
+            } else {
+              content = entry.content;
+            }
+          } catch {
+            content = entry.content;
+          }
+        } else {
+          content = entry.text || entry.message || '';
+        }
+        if (!content.trim()) continue;
+        messages.push({ role: 'user', content, tokens: countTokens(content), type: 'user' });
+        continue;
+      }
+
+      if (entry.type === 'assistant-reply') {
+        let content = '';
+        if (typeof entry.content === 'string') {
+          // Could be a JSON-stringified content array
+          try {
+            const parsed = JSON.parse(entry.content);
+            if (Array.isArray(parsed)) {
+              content = parsed.map((c: any) => c.text || c.content || '').filter(Boolean).join('\n');
+            } else {
+              content = entry.content;
+            }
+          } catch {
+            content = entry.content;
+          }
+        } else {
+          content = entry.text || entry.message || '';
+        }
+        if (!content.trim()) continue;
+        messages.push({ role: 'assistant', content, tokens: countTokens(content), type: 'assistant' });
+        continue;
+      }
+
+      // Fallback: entries with role field directly
+      if (entry.role === 'user' || entry.role === 'assistant') {
+        const content = typeof entry.content === 'string' ? entry.content
+          : Array.isArray(entry.content)
+            ? entry.content.map((c: any) => c.text || c.content || '').join('\n')
+            : '';
+        if (!content.trim()) continue;
+        messages.push({
+          role: entry.role,
+          content,
+          tokens: countTokens(content),
+          type: entry.role,
+        });
+      }
     } catch {
       continue;
     }
@@ -185,6 +249,9 @@ export async function prepareEvalTasks(
 
   const files = (await readdir(sessionsDir))
     .filter(f => f.endsWith('.jsonl'))
+    .map(f => ({ name: f, size: statSync(join(sessionsDir, f)).size }))
+    .sort((a, b) => b.size - a.size) // largest first — more likely to have conversations
+    .map(f => f.name)
     .slice(0, maxSessions);
 
   for (const file of files) {
