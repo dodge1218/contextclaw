@@ -6,6 +6,10 @@ studio
 scripts
 *.tsbuildinfo
 .contextclaw-memory
+.contextclaw-eval-memory
+corpus
+quality-eval-results.json
+run-eval*.sh
 memory
 outputs
 HN-REVIEW.md
