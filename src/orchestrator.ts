@@ -5,6 +5,10 @@ import { MemoryStore } from './memory.js';
 import { CircuitBreaker } from './circuit-breaker.js';
 import { SubagentLauncher } from './subagent.js';
 
+type IngestBlock = Omit<ContextBlock, 'id' | 'createdAt' | 'lastReferencedAt' | 'score' | 'pinned' | 'evictable'> & {
+  turnsElapsed?: number;
+};
+
 export class ContextClaw {
   readonly budget: ContextBudget;
   readonly eviction: EvictionEngine;
@@ -22,9 +26,21 @@ export class ContextClaw {
   }
 
   /**
+   * Decay scores of all non-pinned blocks to reflect aging.
+   */
+  decayScores(turnsElapsed: number): void {
+    if (!turnsElapsed || turnsElapsed <= 0) return;
+    const decayAmount = 0.1 * turnsElapsed;
+    for (const block of this.budget.getAll()) {
+      if (block.pinned) continue;
+      block.score = Math.max(0, block.score - decayAmount);
+    }
+  }
+
+  /**
    * Add a new context block. If over budget, automatically evicts lowest-scored blocks.
    */
-  async ingest(block: Omit<ContextBlock, 'id' | 'createdAt' | 'lastReferencedAt' | 'score' | 'pinned' | 'evictable'>): Promise<void> {
+  async ingest(block: IngestBlock): Promise<void> {
     let release: () => void;
     const acquired = new Promise<void>(r => { release = r; });
     const prev = this._ingestLock;
@@ -32,13 +48,17 @@ export class ContextClaw {
     await prev;
 
     try {
+      const { turnsElapsed = 0, ...incoming } = block;
+      if (turnsElapsed > 0) {
+        this.decayScores(turnsElapsed);
+      }
       const fullBlock: ContextBlock = {
-        ...block,
+        ...incoming,
         id: crypto.randomUUID(),
         createdAt: Date.now(),
         lastReferencedAt: Date.now(),
-        score: this.scoreBlock(block),
-        pinned: block.type === 'system',
+        score: this.scoreBlock(incoming),
+        pinned: incoming.type === 'system',
         evictable: false,
       };
 

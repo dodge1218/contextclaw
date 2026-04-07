@@ -2,6 +2,7 @@ import { get_encoding, type Tiktoken } from 'tiktoken';
 import type { ContextBlock } from './types.js';
 
 let encoder: Tiktoken | null = null;
+let heuristicWarned = false;
 
 function getEncoder(): Tiktoken | null {
   if (encoder) return encoder;
@@ -21,6 +22,11 @@ export function countTokens(text: string): number {
     } catch {
       // If encoding fails for any reason, fall through to heuristic estimate
     }
+  }
+
+  if (!heuristicWarned) {
+    console.warn('[ContextClaw] tiktoken unavailable, using heuristic token counting (~4 chars/token)');
+    heuristicWarned = true;
   }
 
   // Rough heuristic: 4 characters per token

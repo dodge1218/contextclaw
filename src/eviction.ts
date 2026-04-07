@@ -17,12 +17,13 @@ export class EvictionEngine {
   async evictUntilBudget(): Promise<EvictionResult> {
     const evicted: ContextBlock[] = [];
     const flushedPaths: string[] = [];
+    const candidates = this.getCandidates();
 
     while (this.budget.overBudget) {
-      const candidates = this.getCandidates();
       if (candidates.length === 0) break;
 
-      const victim = candidates[0];
+      const victim = candidates.shift();
+      if (!victim) break;
       this.budget.remove(victim.id);
       evicted.push(victim);
 

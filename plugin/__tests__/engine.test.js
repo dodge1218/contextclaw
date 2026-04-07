@@ -68,8 +68,7 @@ test('assemble truncates old file read but keeps recent conversation', async () 
   // The file read (index 2) should be truncated
   const fileReadResult = result.messages[2].content;
   assert.ok(fileReadResult.length < bigFile.length, 'File read should be truncated');
-  assert.ok(fileReadResult.includes('truncated by ContextClaw') || fileReadResult.includes('import stuff'),
-    'Should contain truncation marker or bookend');
+  assert.match(fileReadResult, /\[ContextClaw:[0-9a-f]{8} truncated \d+ chars\]/i);
 
   // Recent messages should be intact
   assert.strictEqual(result.messages[8].content, 'Thanks, deploy it');

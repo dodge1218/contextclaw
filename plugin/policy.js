@@ -9,7 +9,13 @@
  * No relevance scoring. Just: what type is it, how old is it, how big is it.
  */
 
+import { randomBytes } from 'node:crypto';
 import { TYPES } from './classifier.js';
+
+function formatTruncationMarker(message) {
+  const nonce = randomBytes(4).toString('hex');
+  return `[ContextClaw:${nonce} ${message}]`;
+}
 
 // -------------------------------------------------------
 // Default policies (user-configurable via plugin config)
@@ -123,7 +129,8 @@ function extractBookends(content, maxChars) {
   const head = content.slice(0, half);
   const tail = content.slice(-half);
   const dropped = content.length - maxChars;
-  return `${head}\n\n[... ${dropped} chars truncated by ContextClaw ...]\n\n${tail}`;
+  const marker = formatTruncationMarker(`truncated ${dropped} chars`);
+  return `${head}\n\n${marker}\n\n${tail}`;
 }
 
 function extractTail(content, tailLines = 20) {
@@ -131,18 +138,19 @@ function extractTail(content, tailLines = 20) {
   if (lines.length <= tailLines + 2) return content;
   const kept = lines.slice(-tailLines);
   const dropped = lines.length - tailLines;
-  return `[${dropped} lines truncated by ContextClaw]\n${kept.join('\n')}`;
+  const marker = formatTruncationMarker(`truncated ${dropped} lines`);
+  return `${marker}\n${kept.join('\n')}`;
 }
 
 function extractPointer(content) {
   // Try to find a filename or media reference
   const fileMatch = content.match(/\/([\w.-]+\.(?:jpg|jpeg|png|gif|webp|svg|pdf|mp4|mp3))/i);
-  if (fileMatch) return `[media: ${fileMatch[1]}]`;
+  if (fileMatch) return formatTruncationMarker(`media pointer: ${fileMatch[1]}`);
 
   const mediaMatch = content.match(/MEDIA:([\S]+)/);
-  if (mediaMatch) return `[media: ${mediaMatch[1]}]`;
+  if (mediaMatch) return formatTruncationMarker(`media pointer: ${mediaMatch[1]}`);
 
-  return `[media attachment — ${content.length} chars, binary dropped by ContextClaw]`;
+  return formatTruncationMarker(`media attachment — ${content.length} chars, binary dropped`);
 }
 
 function extractErrorLine(content, maxChars = 300) {

@@ -49,7 +49,7 @@ test('file read 2 turns ago truncated to bookends', () => {
   assert.strictEqual(result.action, 'truncate');
   assert.ok(result.msg.content.includes('HEADER'));
   assert.ok(result.msg.content.includes('FOOTER'));
-  assert.ok(result.msg.content.includes('truncated by ContextClaw'));
+  assert.match(result.msg.content, /\[ContextClaw:[0-9a-f]{8} truncated \d+ chars\]/i);
   assert.ok(result.savedChars > 4000, `Should save significant chars, saved: ${result.savedChars}`);
 });
 
@@ -64,7 +64,7 @@ test('command output 2 turns ago gets tailed', () => {
   const result = applyPolicy(msg, 2);
   assert.strictEqual(result.action, 'truncate');
   assert.ok(result.msg.content.includes('line 99'));  // last line kept
-  assert.ok(result.msg.content.includes('truncated'));
+  assert.match(result.msg.content, /\[ContextClaw:[0-9a-f]{8} truncated \d+ lines\]/i);
 });
 
 // -------------------------------------------------------
