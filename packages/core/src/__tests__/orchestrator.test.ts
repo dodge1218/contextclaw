@@ -76,7 +76,8 @@ describe('ContextClaw', () => {
 
       const older = cc.budget.getAll().find(b => b.content === 'Older decision');
       const system = cc.budget.getAll().find(b => b.content === 'Root instructions');
-      expect(older?.score).toBeCloseTo(0.4, 5);
+      const expected = 0.7 * Math.pow(0.95, 3);
+      expect(older?.score).toBeCloseTo(expected, 5);
       expect(system?.score).toBe(1);
     });
 
@@ -85,7 +86,24 @@ describe('ContextClaw', () => {
       await cc.ingest({ ...makeBlock('user', 'Latest instructions', 10), turnsElapsed: 2 });
 
       const firstReply = cc.budget.getAll().find(b => b.content === 'First reply');
-      expect(firstReply?.score).toBeCloseTo(0.5, 5);
+      const expected = 0.7 * Math.pow(0.95, 2);
+      expect(firstReply?.score).toBeCloseTo(expected, 5);
+    });
+
+    it('supports configurable decay factors', async () => {
+      const custom = new ContextClaw({
+        maxContextTokens: 1000,
+        evictionStrategy: 'lru-scored',
+        memoryStore: '/tmp/contextclaw-memory',
+        retryCircuitBreaker: { maxRetries: 3, fallbackModels: ['gpt-4o-mini'] },
+        subagentDefaults: { maxContextTokens: 500, injectOnly: ['task'] },
+        scoreDecayFactor: 0.5,
+      });
+
+      await custom.ingest(makeBlock('assistant', 'Test', 10));
+      await custom.ingest({ ...makeBlock('user', 'turn', 10), turnsElapsed: 4 });
+      const target = custom.budget.getAll().find(b => b.content === 'Test');
+      expect(target?.score).toBeCloseTo(0.7 * Math.pow(0.5, 4), 5);
     });
   });
 });

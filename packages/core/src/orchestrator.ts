@@ -16,6 +16,8 @@ export class ContextClaw {
   readonly circuitBreaker: CircuitBreaker;
   readonly subagents: SubagentLauncher;
   private _ingestLock: Promise<void> = Promise.resolve();
+  private currentTurn = 0;
+  private decayFactor: number;
 
   constructor(config: ContextClawConfig) {
     this.budget = new ContextBudget(config.maxContextTokens);
@@ -23,6 +25,7 @@ export class ContextClaw {
     this.eviction = new EvictionEngine(this.budget, this.memory, config.evictionStrategy);
     this.circuitBreaker = new CircuitBreaker(config.retryCircuitBreaker);
     this.subagents = new SubagentLauncher(config.subagentDefaults);
+    this.decayFactor = config.scoreDecayFactor ?? 0.95;
   }
 
   /**
@@ -30,11 +33,8 @@ export class ContextClaw {
    */
   decayScores(turnsElapsed: number): void {
     if (!turnsElapsed || turnsElapsed <= 0) return;
-    const decayAmount = 0.1 * turnsElapsed;
-    for (const block of this.budget.getAll()) {
-      if (block.pinned) continue;
-      block.score = Math.max(0, block.score - decayAmount);
-    }
+    const advanced = this.advanceTurns(turnsElapsed);
+    if (advanced > 0) this.recalculateAgingScores();
   }
 
   /**
@@ -48,16 +48,20 @@ export class ContextClaw {
     await prev;
 
     try {
-      const { turnsElapsed = 0, ...incoming } = block;
-      if (turnsElapsed > 0) {
-        this.decayScores(turnsElapsed);
+      const { turnsElapsed, ...incoming } = block;
+      const advanced = this.advanceTurns(turnsElapsed);
+      if (advanced > 0) {
+        this.recalculateAgingScores();
       }
+      const baseScore = this.scoreBlock(incoming);
       const fullBlock: ContextBlock = {
         ...incoming,
         id: crypto.randomUUID(),
         createdAt: Date.now(),
         lastReferencedAt: Date.now(),
-        score: this.scoreBlock(incoming),
+        score: baseScore,
+        baseScore,
+        ingestTurn: this.currentTurn,
         pinned: incoming.type === 'system',
         evictable: false,
       };
@@ -65,6 +69,7 @@ export class ContextClaw {
       this.budget.add(fullBlock);
 
       if (this.budget.overBudget) {
+        this.recalculateAgingScores();
         await this.eviction.evictUntilBudget();
       }
     } finally {
@@ -110,5 +115,29 @@ export class ContextClaw {
       utilizationPercent: Math.round(this.budget.utilization * 100),
       evictionHistory: this.eviction.getHistory(),
     };
+  }
+
+  private advanceTurns(turnsElapsed?: number): number {
+    if (typeof turnsElapsed === 'number' && Number.isFinite(turnsElapsed)) {
+      const delta = Math.max(0, Math.floor(turnsElapsed));
+      if (delta > 0) this.currentTurn += delta;
+      return delta;
+    }
+    return 0;
+  }
+
+  private recalculateAgingScores(): void {
+    for (const block of this.budget.getAll()) {
+      if (block.pinned) continue;
+      const base = block.baseScore ?? block.score;
+      const startTurn = block.ingestTurn ?? this.currentTurn;
+      const age = Math.max(0, this.currentTurn - startTurn);
+      const decayed = base * Math.pow(this.decayFactor, age);
+      block.baseScore = base;
+      block.score = Math.max(0, decayed);
+      if (!block.ingestTurn) {
+        block.ingestTurn = startTurn;
+      }
+    }
   }
 }

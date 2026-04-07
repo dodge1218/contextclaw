@@ -6,6 +6,7 @@ import { GatewayClient } from './gateway-client.js';
 import { ContextClaw } from './orchestrator.js';
 import { analyzeSession } from './analyzer.js';
 import { SessionWatcher } from './watcher.js';
+import { isUsingHeuristic } from './budget.js';
 
 const DEFAULT_WS_URL = 'ws://127.0.0.1:18789';
 
@@ -134,6 +135,10 @@ async function main() {
       console.log(`  Turns: ${analysis.turnCount}`);
       console.log(`  Context: ~${(analysis.estimatedContextTokens / 1000).toFixed(1)}K tokens`);
       console.log(`  Status: ${analysis.recommendation.toUpperCase()}`);
+
+      if (isUsingHeuristic()) {
+        console.log(`  ⚠ Token counting: heuristic (~4 chars/token). Install tiktoken for accuracy.`);
+      }
       console.log('\n  Breakdown:');
       for (const [type, data] of Object.entries(analysis.breakdown)) {
         console.log(`    ${type}: ${data.count} turns, ~${(data.tokens / 1000).toFixed(1)}K tokens`);

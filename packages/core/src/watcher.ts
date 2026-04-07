@@ -9,11 +9,13 @@
  */
 
 import { createReadStream, readdirSync, statSync } from 'fs';
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { writeFile, mkdir } from 'fs/promises';
 import { join, basename } from 'path';
 import { homedir } from 'os';
 import { createInterface } from 'readline';
 import { countTokens } from './budget.js';
+import { streamJsonl } from './jsonl-reader.js';
+import { generateTruncationMarker } from './markers.js';
 
 export interface WatcherConfig {
   /** Token threshold before triggering compaction advisory */
@@ -59,6 +61,10 @@ export class SessionWatcher {
   private running = false;
   private onAlert?: (msg: string) => void;
   private pollTimer?: NodeJS.Timeout;
+  private turnCache: SessionTurn[] = [];
+  private streamOffset = 0;
+  private pendingLine = '';
+  private streamPromise: Promise<void> | null = null;
 
   constructor(config: Partial<WatcherConfig> = {}, onAlert?: (msg: string) => void) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -90,73 +96,29 @@ export class SessionWatcher {
    * Falls back to sync read for small files (<1MB) for speed.
    */
   async parseSessionAsync(filePath: string): Promise<SessionTurn[]> {
-    const stat = statSync(filePath);
-    
-    // Small files: read directly (fast path, <1MB)
-    if (stat.size < 1_000_000) {
-      const { readFileSync } = await import('fs');
-      const raw = readFileSync(filePath, 'utf-8');
-      return this._parseLinesSync(raw.split('\n'));
-    }
-
-    // Large files: stream line-by-line to avoid OOM
     const turns: SessionTurn[] = [];
-    const rl = createInterface({
-      input: createReadStream(filePath, { encoding: 'utf-8' }),
-      crlfDelay: Infinity,
-    });
-
-    for await (const line of rl) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const turn = this._parseLine(trimmed);
-      if (turn) turns.push(turn);
-    }
-
-    return turns;
-  }
-
-  /**
-   * Sync parse (kept for backward compat, delegates to async internally).
-   * @deprecated Use parseSessionAsync instead.
-   */
-  parseSession(filePath: string): SessionTurn[] {
-    const { readFileSync } = require('fs');
-    const raw = readFileSync(filePath, 'utf-8');
-    return this._parseLinesSync(raw.split('\n'));
-  }
-
-  private _parseLinesSync(lines: string[]): SessionTurn[] {
-    const turns: SessionTurn[] = [];
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const turn = this._parseLine(trimmed);
+    for await (const entry of streamJsonl(filePath)) {
+      const turn = this._entryToTurn(entry);
       if (turn) turns.push(turn);
     }
     return turns;
   }
 
-  private _parseLine(line: string): SessionTurn | null {
-    try {
-      const entry = JSON.parse(line);
-      if (entry.type !== 'message' || !entry.message) return null;
-      const msg = entry.message;
-      const content = typeof msg.content === 'string'
-        ? msg.content
-        : JSON.stringify(msg.content ?? '');
+  private _entryToTurn(entry: any): SessionTurn | null {
+    if (entry.type !== 'message' || !entry.message) return null;
+    const msg = entry.message;
+    const content = typeof msg.content === 'string'
+      ? msg.content
+      : JSON.stringify(msg.content ?? '');
 
-      return {
-        role: msg.role ?? 'unknown',
-        content,
-        tokens: msg.usage?.totalTokens ?? countTokens(content),
-        type: this.classifyTurn(msg),
-        timestamp: entry.timestamp ?? '',
-        usage: msg.usage,
-      };
-    } catch {
-      return null;
-    }
+    return {
+      role: msg.role ?? 'unknown',
+      content,
+      tokens: msg.usage?.totalTokens ?? countTokens(content),
+      type: this.classifyTurn(msg),
+      timestamp: entry.timestamp ?? '',
+      usage: msg.usage,
+    };
   }
 
   private classifyTurn(msg: any): string {
@@ -185,10 +147,11 @@ export class SessionWatcher {
     bloatSources: { type: string; tokens: number; preview: string }[];
     recommendation: 'ok' | 'warn' | 'compact-now';
   } | null> {
-    const sessionPath = this.findActiveSession();
+    const sessionPath = await this.ensureActiveSession();
     if (!sessionPath) return null;
 
-    const turns = await this.parseSessionAsync(sessionPath);
+    await this.ensureTurnsUpToDate();
+    const turns = [...this.turnCache];
     const breakdown: Record<string, { count: number; tokens: number }> = {};
     const bloatSources: { type: string; tokens: number; preview: string }[] = [];
 
@@ -206,6 +169,16 @@ export class SessionWatcher {
           tokens: turn.tokens,
           preview: turn.content.slice(0, 100) + '...',
         });
+      }
+    }
+
+    // Truncate oversized tool results and insert nonce markers
+    for (const turn of turns) {
+      if (turn.type === 'tool-result' && turn.tokens > this.config.toolResultMaxTokens) {
+        const marker = generateTruncationMarker(turn.tokens);
+        const maxChars = this.config.toolResultMaxTokens * 4; // rough chars-per-token
+        turn.content = turn.content.slice(0, maxChars) + `\n${marker}`;
+        turn.tokens = countTokens(turn.content);
       }
     }
 
@@ -240,10 +213,16 @@ export class SessionWatcher {
     flush: { type: string; preview: string; tokens: number; reason: string }[];
     estimatedSavings: number;
   }> {
-    const path = sessionPath ?? this.findActiveSession();
+    const path = sessionPath ?? await this.ensureActiveSession();
     if (!path) return { keep: [], flush: [], estimatedSavings: 0 };
 
-    const turns = await this.parseSessionAsync(path);
+    let turns: SessionTurn[];
+    if (!sessionPath || path === this.activeSessionPath) {
+      await this.ensureTurnsUpToDate();
+      turns = [...this.turnCache];
+    } else {
+      turns = await this.parseSessionAsync(path);
+    }
     const keep: { type: string; preview: string; tokens: number }[] = [];
     const flush: { type: string; preview: string; tokens: number; reason: string }[] = [];
 
@@ -304,6 +283,7 @@ export class SessionWatcher {
   start(): void {
     this.running = true;
     this.activeSessionPath = this.findActiveSession();
+    this.resetStreamState();
 
     if (!this.activeSessionPath) {
       this.onAlert?.('[ContextClaw] No active session found');
@@ -324,6 +304,7 @@ export class SessionWatcher {
         if (currentSession !== this.activeSessionPath) {
           console.log(`[ContextClaw] Session switched to: ${basename(currentSession ?? 'none')}`);
           this.activeSessionPath = currentSession;
+          this.resetStreamState();
         }
         if (!this.activeSessionPath) return;
 
@@ -361,6 +342,91 @@ export class SessionWatcher {
       );
     } else {
       console.log(`[ContextClaw] OK — ${ctx.toLocaleString()} tokens (${pct}% of limit)`);
+    }
+  }
+
+  private resetStreamState(): void {
+    this.turnCache = [];
+    this.streamOffset = 0;
+    this.pendingLine = '';
+    this.streamPromise = null;
+    this.lastSize = 0;
+  }
+
+  private async ensureActiveSession(): Promise<string | null> {
+    if (this.activeSessionPath) return this.activeSessionPath;
+    const path = this.findActiveSession();
+    if (path) {
+      this.activeSessionPath = path;
+      this.resetStreamState();
+    }
+    return this.activeSessionPath;
+  }
+
+  private async ensureTurnsUpToDate(): Promise<void> {
+    if (!this.activeSessionPath) return;
+    if (this.streamPromise) {
+      await this.streamPromise;
+      return;
+    }
+
+    const path = this.activeSessionPath;
+    this.streamPromise = this.consumeSessionStream(path).finally(() => {
+      this.streamPromise = null;
+    });
+    await this.streamPromise;
+  }
+
+  private async consumeSessionStream(path: string): Promise<void> {
+    let startOffset = this.streamOffset;
+    try {
+      const stat = statSync(path);
+      if (startOffset > stat.size) {
+        startOffset = 0;
+        this.turnCache = [];
+      }
+      if (stat.size === startOffset && !this.pendingLine) {
+        this.lastSize = stat.size;
+        return;
+      }
+    } catch {
+      return;
+    }
+
+    const rl = createInterface({
+      input: createReadStream(path, { encoding: 'utf-8', start: startOffset }),
+      crlfDelay: Infinity,
+    });
+
+    let carry = this.pendingLine;
+
+    for await (const rawLine of rl) {
+      const line = carry ? carry + rawLine : rawLine;
+      carry = '';
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      try {
+        const entry = JSON.parse(trimmed);
+        const turn = this._entryToTurn(entry);
+        if (turn) this.turnCache.push(turn);
+      } catch (err: any) {
+        if (err?.message?.includes('Unexpected end of JSON input')) {
+          carry = line;
+        } else {
+          console.warn('[ContextClaw] Skipping malformed session line:', err?.message ?? err);
+        }
+      }
+    }
+
+    this.pendingLine = carry;
+
+    try {
+      const stat = statSync(path);
+      this.streamOffset = stat.size;
+      this.lastSize = stat.size;
+    } catch {
+      // File vanished mid-stream; keep previous offsets so we'll retry later
     }
   }
 }

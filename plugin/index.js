@@ -11,6 +11,7 @@ import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { WebSocketServer } from 'ws';
+import { get_encoding } from 'tiktoken';
 import { classifyAll, TYPES } from './classifier.js';
 import { applyPolicy, DEFAULT_POLICIES } from './policy.js';
 
@@ -36,6 +37,69 @@ function loadLifetimeStats() {
 }
 
 const stats = loadLifetimeStats();
+
+let encoder = null;
+let warnedTokenizerFallback = false;
+
+function getEncoder() {
+  if (encoder) return encoder;
+  try {
+    encoder = get_encoding('cl100k_base');
+  } catch {
+    encoder = null;
+  }
+  return encoder;
+}
+
+function warnTokenizerFallback() {
+  if (warnedTokenizerFallback) return;
+  warnedTokenizerFallback = true;
+  console.warn('[ContextClaw] tiktoken unavailable in plugin, using heuristic token counter (~4 chars/token)');
+}
+
+function countTokens(text = '') {
+  const enc = getEncoder();
+  if (enc) {
+    try {
+      return enc.encode_ordinary(text).length;
+    } catch {
+      warnTokenizerFallback();
+    }
+  } else {
+    warnTokenizerFallback();
+  }
+  return Math.ceil(text.length / 4);
+}
+
+function ensureContentBlocks(content) {
+  if (Array.isArray(content)) {
+    return content.map(block => (typeof block === 'string'
+      ? { type: 'text', text: block }
+      : block));
+  }
+  if (typeof content === 'string') {
+    return [{ type: 'text', text: content }];
+  }
+  if (content == null) return [];
+  if (typeof content === 'object' && content.type) return [content];
+  return [{ type: 'text', text: typeof content === 'object' ? JSON.stringify(content) : String(content) }];
+}
+
+function countContentTokens(blocks) {
+  if (!Array.isArray(blocks)) return 0;
+  let total = 0;
+  for (const block of blocks) {
+    if (!block) continue;
+    if (typeof block === 'string') {
+      total += countTokens(block);
+      continue;
+    }
+    if (block.type === 'text' && typeof block.text === 'string') {
+      total += countTokens(block.text);
+    }
+  }
+  return total;
+}
 
 // Default config
 const DEFAULT_CONFIG = {
@@ -195,10 +259,14 @@ class ContextClawEngine {
       }
 
       // Step 5: build output
+      let estimatedTokens = 0;
       const kept = results.map(r => {
         // Strip internal metadata before returning
         const { _type, _chars, _truncated, _originalChars, ...clean } = r.msg;
-        return clean;
+        const normalized = { ...clean };
+        normalized.content = ensureContentBlocks(normalized.content);
+        estimatedTokens += countContentTokens(normalized.content);
+        return normalized;
       });
 
       // Stats
@@ -251,7 +319,7 @@ class ContextClawEngine {
 
       return {
         messages: kept,
-        estimatedTokens: 0, // not our job to estimate — gateway handles this
+        estimatedTokens,
       };
     } catch (e) {
       console.error('[ContextClaw] assemble error:', e);

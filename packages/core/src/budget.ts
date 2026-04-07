@@ -3,11 +3,22 @@ import type { ContextBlock } from './types.js';
 
 let encoder: Tiktoken | null = null;
 let warnedHeuristicFallback = false;
+let usingHeuristic = false;
 
 function warnHeuristicCounter() {
+  usingHeuristic = true;
   if (warnedHeuristicFallback) return;
   warnedHeuristicFallback = true;
   console.warn('[ContextClaw] tiktoken unavailable, using heuristic token counting (~4 chars/token)');
+}
+
+/**
+ * Returns true if tiktoken failed to load and we're using the heuristic fallback.
+ */
+export function isUsingHeuristic(): boolean {
+  // Force a check if we haven't tried yet
+  if (!warnedHeuristicFallback && !encoder) getEncoder();
+  return usingHeuristic;
 }
 
 function getEncoder(): Tiktoken | null {
@@ -76,6 +87,7 @@ export class ContextBudget {
 
     block.lastReferencedAt = Date.now();
     block.score = Math.min(1, block.score + 0.1);
+    block.baseScore = block.score;
   }
 
   getAll(): ContextBlock[] {
@@ -93,6 +105,9 @@ export class ContextBudget {
   getEvictionCandidates(): ContextBlock[] {
     return this.getAll()
       .filter(block => !block.pinned)
-      .sort((a, b) => (a.score - b.score) || (a.lastReferencedAt - b.lastReferencedAt));
+      .sort((a, b) => {
+        if (a.score !== b.score) return b.score - a.score;
+        return b.lastReferencedAt - a.lastReferencedAt;
+      });
   }
 }

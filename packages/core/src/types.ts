@@ -4,6 +4,7 @@ export interface ContextClawConfig {
   memoryStore: string;
   retryCircuitBreaker: CircuitBreakerConfig;
   subagentDefaults: SubagentDefaults;
+  scoreDecayFactor?: number;
 }
 
 export type EvictionStrategy = 'lru-scored' | 'fifo' | 'manual';
@@ -32,6 +33,8 @@ export interface ContextBlock {
   pinned: boolean; // never evict
   evictable: boolean; // for manual strategy: only evict if true
   source?: string; // tool name, file path, etc.
+  baseScore?: number;
+  ingestTurn?: number;
 }
 
 export interface SubagentConfig {

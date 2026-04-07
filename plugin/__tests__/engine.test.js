@@ -66,13 +66,16 @@ test('assemble truncates old file read but keeps recent conversation', async () 
   assert.strictEqual(result.messages.length, messages.length);
 
   // The file read (index 2) should be truncated
-  const fileReadResult = result.messages[2].content;
-  assert.ok(fileReadResult.length < bigFile.length, 'File read should be truncated');
-  assert.match(fileReadResult, /\[ContextClaw:[0-9a-f]{8} truncated \d+ chars\]/i);
+  const fileReadBlocks = result.messages[2].content;
+  assert.ok(Array.isArray(fileReadBlocks));
+  const fileReadText = fileReadBlocks.map(b => (b?.text ?? b)).join('');
+  assert.ok(fileReadText.length < bigFile.length, 'File read should be truncated');
+  assert.match(fileReadText, /\[ContextClaw:[0-9a-f]{8} truncated \d+ chars\]/i);
 
   // Recent messages should be intact
-  assert.strictEqual(result.messages[8].content, 'Thanks, deploy it');
-  assert.strictEqual(result.messages[7].content, 'Fixed.');
+  assert.strictEqual(result.messages[8].content[0].text, 'Thanks, deploy it');
+  assert.strictEqual(result.messages[7].content[0].text, 'Fixed.');
+  assert.ok(result.estimatedTokens > 0, 'should include token estimate');
 });
 
 test('assemble preserves system prompt always', async () => {
@@ -87,7 +90,7 @@ test('assemble preserves system prompt always', async () => {
   ];
 
   const result = await engine.assemble({ sessionId: 'test-system', messages });
-  assert.strictEqual(result.messages[0].content, longSystem, 'System prompt untouched');
+  assert.strictEqual(result.messages[0].content[0].text, longSystem, 'System prompt untouched');
 });
 
 test('assemble handles empty messages gracefully', async () => {

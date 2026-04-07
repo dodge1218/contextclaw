@@ -22,7 +22,7 @@ export class EvictionEngine {
     while (this.budget.overBudget) {
       if (candidates.length === 0) break;
 
-      const victim = candidates.shift();
+      const victim = candidates.pop();
       if (!victim) break;
       this.budget.remove(victim.id);
       evicted.push(victim);
@@ -57,11 +57,11 @@ export class EvictionEngine {
       case 'fifo':
         return this.budget.getAll()
           .filter(b => !b.pinned)
-          .sort((a, b) => a.createdAt - b.createdAt);
+          .sort((a, b) => b.createdAt - a.createdAt);
       case 'manual':
         return this.budget.getAll()
           .filter(b => !b.pinned && b.evictable)
-          .sort((a, b) => a.createdAt - b.createdAt);
+          .sort((a, b) => b.createdAt - a.createdAt);
       case 'lru-scored':
       default:
         return this.budget.getEvictionCandidates();

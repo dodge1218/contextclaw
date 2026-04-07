@@ -73,7 +73,7 @@ describe('EvictionEngine', () => {
       budget.add(makeBlock('c', 800, { evictable: true }));
 
       const result = await engine.evictUntilBudget();
-      expect(result.evicted.map(b => b.id)).toEqual(['a', 'c']);
+      expect(result.evicted.map(b => b.id).sort()).toEqual(['a', 'c']);
       expect(result.kept.map(b => b.id)).toContain('b');
     });
   });

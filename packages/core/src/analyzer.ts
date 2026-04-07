@@ -1,7 +1,7 @@
-import { createReadStream, readdirSync, statSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { createInterface } from 'node:readline';
+import { streamJsonl } from './jsonl-reader.js';
 
 const SESSIONS_DIR = join(homedir(), '.openclaw', 'agents', 'main', 'sessions');
 
@@ -44,16 +44,7 @@ async function analyzeFile(path: string): Promise<SessionStats> {
   const stat = statSync(path);
   const sizeKB = stat.size / 1024;
 
-  // Stream line-by-line to avoid OOM on large sessions
-  const rl = createInterface({
-    input: createReadStream(path, { encoding: 'utf-8' }),
-    crlfDelay: Infinity,
-  });
-
-  for await (const line of rl) {
-    if (!line.trim()) continue;
-    let d: any;
-    try { d = JSON.parse(line); } catch { continue; }
+  for await (const d of streamJsonl(path)) {
     if (d.type !== 'message') continue;
     messages++;
 
