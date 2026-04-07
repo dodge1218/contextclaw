@@ -1,6 +1,6 @@
 {
   "name": "contextclaw",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "Stop sending Dockerfiles to your LLM 30 turns after you read them. Context management for AI agents.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

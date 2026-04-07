@@ -1,0 +1,12 @@
+.git
+.github
+eval/transcripts
+eval/results
+studio
+scripts
+*.tsbuildinfo
+.contextclaw-memory
+memory
+outputs
+HN-REVIEW.md
+PRD-ADDITIONS.md

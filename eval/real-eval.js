@@ -1,160 +1,153 @@
+import { ContextClawEngine } from '../plugin/index.js';
+import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
+import { join, basename } from 'node:path';
+
+const SESSIONS_DIR = join(process.env.HOME, '.openclaw', 'agents', 'main', 'sessions');
+const RESULTS_DIR = join(process.env.HOME, '.openclaw', 'workspace', 'contextclaw', 'eval', 'results');
+
 /**
- * ContextClaw Real-World Eval
- * Runs the actual plugin on real session transcripts from corpus/
- * Measures: token reduction, what got truncated, and potential re-read detection
+ * Run ContextClaw against real session .reset files (pre-compaction backups).
+ * These contain the full uncompacted conversation — perfect eval input.
  */
-import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
-import { ContextClawEngine, computeTurnsAgo } from '../plugin/index.js';
-import { classifyAll } from '../plugin/classifier.js';
-import { applyPolicy } from '../plugin/policy.js';
+async function runRealEval() {
+  const engine = new ContextClawEngine({ enableTelemetry: false });
+  
+  // Find .reset files from the last 24h
+  const allFiles = readdirSync(SESSIONS_DIR).filter(f => f.includes('.reset.'));
+  const recent = allFiles
+    .map(f => ({ name: f, path: join(SESSIONS_DIR, f), mtime: statSync(join(SESSIONS_DIR, f)).mtimeMs }))
+    .filter(f => Date.now() - f.mtime < 86400000)
+    .sort((a, b) => a.mtime - b.mtime);
 
-const CORPUS = process.env.CONTEXTCLAW_CORPUS || './eval/transcripts';
+  if (recent.length === 0) {
+    console.error('No recent .reset files found');
+    process.exit(1);
+  }
 
-// Pick the heaviest sessions (most messages)
-function findSessions(limit = 5) {
-  const files = readdirSync(CORPUS).filter(f => f.endsWith('.jsonl'));
-  const sized = files.map(f => {
-    const lines = readFileSync(`${CORPUS}/${f}`, 'utf-8').trim().split('\n');
-    return { file: f, count: lines.length };
-  });
-  sized.sort((a, b) => b.count - a.count);
-  return sized.slice(0, limit);
-}
+  console.log(`Found ${recent.length} reset files from last 24h\n`);
 
-function charTokenEstimate(text) {
-  return Math.ceil((text || '').length / 4);
-}
+  const results = [];
 
-function processSession(filepath) {
-  const raw = readFileSync(filepath, 'utf-8').trim().split('\n');
-  const messages = raw.map(line => {
-    try { return JSON.parse(line); } catch { return null; }
-  }).filter(Boolean);
-
-  // Convert to the format classifier expects
-  const normalized = messages.map(m => ({
-    role: m.role || 'user',
-    content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content || ''),
-    _source: m._source || undefined,
-  }));
-
-  // Input token count
-  const inputTokens = normalized.reduce((sum, m) => sum + charTokenEstimate(m.content), 0);
-
-  // Classify
-  const classified = classifyAll(normalized);
-
-  // Apply policies (simulate being at turn N for each message)
-  const userTurns = classified.filter(m => m.role === 'user').length;
-  let outputTokens = 0;
-  let truncatedCount = 0;
-  let truncatedTypes = {};
-  let savedChars = 0;
-  const truncatedItems = [];
-
-  classified.forEach((msg, i) => {
-    const turnsAgo = computeTurnsAgo(classified, i);
-    const result = applyPolicy(msg, turnsAgo);
-    const afterTokens = charTokenEstimate(result.msg.content);
-    outputTokens += afterTokens;
-
-    if (result.action === 'truncate' || result.msg._truncated) {
-      truncatedCount++;
-      const type = msg._type || 'unknown';
-      truncatedTypes[type] = (truncatedTypes[type] || 0) + 1;
-      const origChars = (result.originalChars || msg.content.length);
-      const afterChars = result.msg.content.length;
-      savedChars += (origChars - afterChars);
-      if (origChars > 5000) {
-        truncatedItems.push({
-          type,
-          turnsAgo,
-          origChars,
-          afterChars,
-          preview: msg.content.substring(0, 80).replace(/\n/g, ' '),
-        });
-      }
+  for (const file of recent) {
+    const raw = readFileSync(file.path, 'utf-8');
+    const lines = raw.split('\n').filter(l => l.trim());
+    
+    // Parse OpenClaw session event log into messages array
+    const messages = [];
+    for (const line of lines) {
+      try {
+        const obj = JSON.parse(line);
+        if (obj.type !== 'message' || !obj.message) continue;
+        const msg = obj.message;
+        let role = msg.role;
+        // Map OpenClaw roles to standard
+        if (role === 'toolResult') role = 'tool';
+        if (!['system', 'user', 'assistant', 'tool'].includes(role)) continue;
+        
+        let content = msg.content;
+        // content is typically an array of parts
+        if (Array.isArray(content)) {
+          content = content.map(p => {
+            if (typeof p === 'string') return p;
+            if (p.type === 'text') return p.text || '';
+            if (p.type === 'tool_result') return p.content || p.text || JSON.stringify(p);
+            return JSON.stringify(p);
+          }).join('\n');
+        } else if (typeof content !== 'string') {
+          content = JSON.stringify(content);
+        }
+        
+        if (content && content.length > 0) {
+          messages.push({ role, content });
+        }
+      } catch { /* skip */ }
     }
-  });
 
-  return {
-    messages: normalized.length,
-    userTurns,
-    inputTokens,
-    outputTokens,
-    reduction: inputTokens > 0 ? ((1 - outputTokens / inputTokens) * 100).toFixed(1) : '0',
-    truncatedCount,
-    truncatedTypes,
-    savedChars,
-    bigTruncations: truncatedItems.slice(0, 5),
+    if (messages.length < 5) continue;
+
+    // Count original tokens (chars/4 approximation)
+    const originalChars = messages.reduce((sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0), 0);
+    
+    // Run ContextClaw
+    try {
+      const result = await engine.assemble({
+        sessionId: `eval-${basename(file.name)}`,
+        messages,
+      });
+
+      const outputChars = result.messages.reduce((sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0), 0);
+      const reduction = ((originalChars - outputChars) / originalChars * 100);
+      
+      // Count truncated items
+      let truncated = 0;
+      for (const msg of result.messages) {
+        if (typeof msg.content === 'string' && msg.content.includes('[ContextClaw:')) {
+          truncated++;
+        }
+      }
+
+      const entry = {
+        file: basename(file.name).slice(0, 16),
+        messages: messages.length,
+        originalChars,
+        outputChars,
+        reduction: Math.round(reduction * 10) / 10,
+        truncated,
+      };
+      results.push(entry);
+      
+      console.log(`${entry.file}: ${entry.messages} msgs, ${entry.originalChars.toLocaleString()} → ${entry.outputChars.toLocaleString()} chars (${entry.reduction}% reduction, ${truncated} truncated)`);
+    } catch (err) {
+      console.error(`Failed on ${basename(file.name)}: ${err.message}`);
+    }
+  }
+
+  // Summary
+  const totalOrig = results.reduce((s, r) => s + r.originalChars, 0);
+  const totalOut = results.reduce((s, r) => s + r.outputChars, 0);
+  const avgReduction = totalOrig > 0 ? ((totalOrig - totalOut) / totalOrig * 100).toFixed(1) : 0;
+  
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`Sessions evaluated: ${results.length}`);
+  console.log(`Total original: ${totalOrig.toLocaleString()} chars`);
+  console.log(`Total output:   ${totalOut.toLocaleString()} chars`);
+  console.log(`Overall reduction: ${avgReduction}%`);
+  console.log(`Est. tokens saved: ~${Math.round((totalOrig - totalOut) / 4).toLocaleString()}`);
+
+  // Write results
+  const report = {
+    date: new Date().toISOString(),
+    methodology: 'Ran ContextClaw.assemble() against uncompacted .reset session files. Compared input vs output character counts.',
+    sessions: results.length,
+    totalOriginalChars: totalOrig,
+    totalOutputChars: totalOut,
+    overallReduction: `${avgReduction}%`,
+    details: results,
   };
+  
+  writeFileSync(join(RESULTS_DIR, `real-eval-${new Date().toISOString().slice(0,10)}.json`), JSON.stringify(report, null, 2));
+  
+  // Markdown
+  const md = `# ContextClaw — Real Session Eval
+Date: ${new Date().toISOString().slice(0, 10)}
+
+## Methodology
+- Input: \`.reset\` files (pre-compaction session backups, full uncompacted conversation)
+- Process: \`ContextClawEngine.assemble()\` on each session
+- Metric: character reduction (input vs output), truncation count
+- No synthetic data. These are real agent sessions.
+
+## Results
+
+| Session | Messages | Original | Output | Reduction | Truncated |
+|---------|----------|----------|--------|-----------|-----------|
+${results.map(r => `| ${r.file} | ${r.messages} | ${r.originalChars.toLocaleString()} | ${r.outputChars.toLocaleString()} | **${r.reduction}%** | ${r.truncated} |`).join('\n')}
+| **Total** | | **${totalOrig.toLocaleString()}** | **${totalOut.toLocaleString()}** | **${avgReduction}%** | |
+
+Est. tokens saved: ~${Math.round((totalOrig - totalOut) / 4).toLocaleString()}
+`;
+  writeFileSync(join(RESULTS_DIR, 'real-world-eval.md'), md);
+  console.log(`\nWritten to: ${join(RESULTS_DIR, 'real-world-eval.md')}`);
 }
 
-// Main
-const sessions = findSessions(5);
-const results = [];
-
-for (const { file, count } of sessions) {
-  try {
-    const r = processSession(`${CORPUS}/${file}`);
-    r.file = file;
-    r.rawMessages = count;
-    results.push(r);
-    console.log(`✓ ${file}: ${r.inputTokens} → ${r.outputTokens} tokens (${r.reduction}% reduction)`);
-  } catch (e) {
-    console.error(`✗ ${file}: ${e.message}`);
-  }
-}
-
-// Generate markdown
-let md = `# ContextClaw — Real-World Eval\n`;
-md += `Tested on ${results.length} actual autonomous agent sessions from production.\n\n`;
-md += `| Session | Messages | Input Tokens | Output Tokens | Reduction | Truncated Items |\n`;
-md += `|---------|----------|--------------|---------------|-----------|------------------|\n`;
-
-let totalIn = 0, totalOut = 0;
-for (const r of results) {
-  const name = r.file.split('-')[0].slice(0, 8);
-  md += `| ${name}… | ${r.messages} | ${r.inputTokens.toLocaleString()} | ${r.outputTokens.toLocaleString()} | **${r.reduction}%** | ${r.truncatedCount} |\n`;
-  totalIn += r.inputTokens;
-  totalOut += r.outputTokens;
-}
-
-const totalReduction = totalIn > 0 ? ((1 - totalOut / totalIn) * 100).toFixed(1) : '0';
-md += `| **Total** | | **${totalIn.toLocaleString()}** | **${totalOut.toLocaleString()}** | **${totalReduction}%** | |\n`;
-
-md += `\n## What Got Truncated\n`;
-for (const r of results) {
-  if (Object.keys(r.truncatedTypes).length > 0) {
-    md += `\n### ${r.file.split('-')[0].slice(0, 8)}…\n`;
-    for (const [type, count] of Object.entries(r.truncatedTypes)) {
-      md += `- ${type}: ${count} items truncated\n`;
-    }
-    if (r.bigTruncations.length > 0) {
-      md += `\nBiggest truncations:\n`;
-      for (const t of r.bigTruncations) {
-        md += `- **${t.type}** (${t.origChars.toLocaleString()} → ${t.afterChars.toLocaleString()} chars, ${t.turnsAgo} turns ago): \`${t.preview}…\`\n`;
-      }
-    }
-  }
-}
-
-md += `\n## Re-Read Risk Assessment\n`;
-md += `Items truncated within 2 turns of a user message referencing the same content could cause re-reads.\n`;
-// Simple heuristic: flag any truncation at turnsAgo <= 2 on a large item
-let rereadRisks = 0;
-for (const r of results) {
-  for (const t of r.bigTruncations) {
-    if (t.turnsAgo <= 2) rereadRisks++;
-  }
-}
-md += `- Potential re-read triggers found: **${rereadRisks}** across ${results.length} sessions\n`;
-if (rereadRisks === 0) {
-  md += `- ✅ No items truncated within the safety window (2 turns)\n`;
-} else {
-  md += `- ⚠️ ${rereadRisks} items were truncated while potentially still relevant\n`;
-}
-
-writeFileSync(new URL('./results/real-world-eval.md', import.meta.url), md);
-console.log(`\nWritten to eval/results/real-world-eval.md`);
-console.log(`\nTotal: ${totalIn.toLocaleString()} → ${totalOut.toLocaleString()} tokens (${totalReduction}% reduction)`);
+runRealEval().catch(console.error);

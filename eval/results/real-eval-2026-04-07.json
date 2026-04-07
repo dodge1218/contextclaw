@@ -1,0 +1,42 @@
+{
+  "date": "2026-04-07T17:24:27.193Z",
+  "methodology": "Ran ContextClaw.assemble() against uncompacted .reset session files. Compared input vs output character counts.",
+  "sessions": 4,
+  "totalOriginalChars": 2866768,
+  "totalOutputChars": 727172,
+  "overallReduction": "74.6%",
+  "details": [
+    {
+      "file": "0c6a999e-2edc-43",
+      "messages": 681,
+      "originalChars": 870819,
+      "outputChars": 185702,
+      "reduction": 78.7,
+      "truncated": 166
+    },
+    {
+      "file": "0c6a999e-2edc-43",
+      "messages": 253,
+      "originalChars": 464918,
+      "outputChars": 108038,
+      "reduction": 76.8,
+      "truncated": 37
+    },
+    {
+      "file": "0c6a999e-2edc-43",
+      "messages": 190,
+      "originalChars": 322912,
+      "outputChars": 205981,
+      "reduction": 36.2,
+      "truncated": 29
+    },
+    {
+      "file": "bcdede66-e41f-46",
+      "messages": 688,
+      "originalChars": 1208119,
+      "outputChars": 227451,
+      "reduction": 81.2,
+      "truncated": 153
+    }
+  ]
+}

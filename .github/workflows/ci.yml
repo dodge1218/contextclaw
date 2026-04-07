@@ -1,7 +1,19 @@
 name: CI
 on: [push, pull_request]
 jobs:
-  test:
+  plugin-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install plugin deps
+        run: cd plugin && npm ci
+      - name: Run plugin tests (36 tests)
+        run: cd plugin && node --test
+
+  core-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -10,11 +22,7 @@ jobs:
           node-version: 22
       - name: Install root deps
         run: npm ci
-      - name: Run plugin tests
-        run: cd plugin && npm ci && node --test
-      - name: Install core deps
-        run: cd packages/core && npm ci --ignore-scripts || true
       - name: Build core
-        run: cd packages/core && npx tsc || true
-      - name: Run core tests
-        run: cd packages/core && npx vitest run || true
+        run: cd packages/core && npx tsc
+      - name: Run core tests (30 tests)
+        run: cd packages/core && npx vitest run

@@ -1,49 +1,20 @@
-# ContextClaw — Real-World Eval
-Tested on 5 actual autonomous agent sessions from production.
+# ContextClaw — Real Session Eval
+Date: 2026-04-07
 
-| Session | Messages | Input Tokens | Output Tokens | Reduction | Truncated Items |
-|---------|----------|--------------|---------------|-----------|------------------|
-| 39f56ed3… | 98 | 12,315 | 5,857 | **52.4%** | 19 |
-| 39f56ed3… | 81 | 18,471 | 6,300 | **65.9%** | 37 |
-| 1b6eaeed… | 77 | 8,682 | 8,402 | **3.2%** | 5 |
-| 39f56ed3… | 72 | 16,051 | 5,531 | **65.5%** | 32 |
-| 39f56ed3… | 69 | 15,425 | 5,268 | **65.8%** | 31 |
-| **Total** | | **70,944** | **31,358** | **55.8%** | |
+## Methodology
+- Input: `.reset` files (pre-compaction session backups, full uncompacted conversation)
+- Process: `ContextClawEngine.assemble()` on each session
+- Metric: character reduction (input vs output), truncation count
+- No synthetic data. These are real agent sessions.
 
-## What Got Truncated
+## Results
 
-### 39f56ed3…
-- tool-search-result: 10 items truncated
-- tool-generic: 7 items truncated
-- assistant-reply: 1 items truncated
-- tool-file-read: 1 items truncated
+| Session | Messages | Original | Output | Reduction | Truncated |
+|---------|----------|----------|--------|-----------|-----------|
+| 0c6a999e-2edc-43 | 681 | 870,819 | 185,702 | **78.7%** | 166 |
+| 0c6a999e-2edc-43 | 253 | 464,918 | 108,038 | **76.8%** | 37 |
+| 0c6a999e-2edc-43 | 190 | 322,912 | 205,981 | **36.2%** | 29 |
+| bcdede66-e41f-46 | 688 | 1,208,119 | 227,451 | **81.2%** | 153 |
+| **Total** | | **2,866,768** | **727,172** | **74.6%** | |
 
-### 39f56ed3…
-- assistant-reply: 8 items truncated
-- tool-search-result: 2 items truncated
-- tool-generic: 22 items truncated
-- error-trace: 3 items truncated
-- tool-file-read: 2 items truncated
-
-### 1b6eaeed…
-- tool-file-read: 1 items truncated
-- tool-search-result: 4 items truncated
-
-### 39f56ed3…
-- assistant-reply: 7 items truncated
-- tool-search-result: 2 items truncated
-- tool-generic: 18 items truncated
-- error-trace: 3 items truncated
-- tool-file-read: 2 items truncated
-
-### 39f56ed3…
-- assistant-reply: 7 items truncated
-- tool-search-result: 2 items truncated
-- tool-generic: 17 items truncated
-- error-trace: 3 items truncated
-- tool-file-read: 2 items truncated
-
-## Re-Read Risk Assessment
-Items truncated within 2 turns of a user message referencing the same content could cause re-reads.
-- Potential re-read triggers found: **0** across 5 sessions
-- ✅ No items truncated within the safety window (2 turns)
+Est. tokens saved: ~534,899
