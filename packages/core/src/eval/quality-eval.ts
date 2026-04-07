@@ -218,13 +218,14 @@ function buildFullContext(messages: SessionMessage[], evalPoint: number): Sessio
 async function buildCompressedContext(
   messages: SessionMessage[],
   evalPoint: number,
-  config: ContextClawConfig
+  config: ContextClawConfig,
+  budgetPct: number = 0.5
 ): Promise<SessionMessage[]> {
   const context = messages.slice(0, evalPoint);
   const fullTokens = context.reduce((s, m) => s + m.tokens, 0);
 
-  // Set budget to 50% of full context so eviction actually fires
-  const tightConfig = { ...config, maxContextTokens: Math.max(2000, Math.floor(fullTokens * 0.5)) };
+  // Set budget to budgetPct of full context so eviction fires
+  const tightConfig = { ...config, maxContextTokens: Math.max(2000, Math.floor(fullTokens * budgetPct)) };
   const engine = new ContextClaw(tightConfig);
 
   // Ingest all messages up to the eval point
@@ -252,10 +253,11 @@ async function buildCompressedContext(
 export async function prepareEvalTasks(
   sessionsDir: string,
   config: ContextClawConfig,
-  options: { maxSessions?: number; tasksPerSession?: number } = {}
+  options: { maxSessions?: number; tasksPerSession?: number; budgetPct?: number } = {}
 ): Promise<EvalTask[]> {
   const maxSessions = options.maxSessions ?? 5;
   const tasksPerSession = options.tasksPerSession ?? 5;
+  const budgetPct = options.budgetPct ?? 0.5;
   const tasks: EvalTask[] = [];
 
   const files = (await readdir(sessionsDir))
@@ -275,7 +277,7 @@ export async function prepareEvalTasks(
     for (let idx = 0; idx < evalPoints.length; idx++) {
       const point = evalPoints[idx];
       const fullContext = buildFullContext(messages, point);
-      const compressedContext = await buildCompressedContext(messages, point, config);
+      const compressedContext = await buildCompressedContext(messages, point, config, budgetPct);
 
       const fullTokens = fullContext.reduce((s, m) => s + m.tokens, 0);
       const compTokens = compressedContext.reduce((s, m) => s + m.tokens, 0);

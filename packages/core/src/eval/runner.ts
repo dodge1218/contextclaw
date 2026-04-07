@@ -26,6 +26,7 @@ const CORPUS_DIR = join(homedir(), '.openclaw', 'workspace', 'corpus');
 interface RunnerOptions {
   maxSessions: number;
   tasksPerSession: number;
+  budgetPct: number;
   outputPath: string;
   judgeModel: string;
   judgeApiBase: string;
@@ -283,6 +284,7 @@ export async function runQualityEval(options: RunnerOptions): Promise<void> {
   console.log(`  Max sessions: ${options.maxSessions}`);
   console.log(`  Tasks/session: ${options.tasksPerSession}`);
   console.log(`  Judge model: ${options.judgeModel}`);
+  console.log(`  Budget: ${Math.round(options.budgetPct * 100)}% of full context`);
   console.log(`  Output: ${options.outputPath}`);
   console.log('');
 
@@ -291,6 +293,7 @@ export async function runQualityEval(options: RunnerOptions): Promise<void> {
   let tasks = await prepareEvalTasks(SESSIONS_DIR, config, {
     maxSessions: options.maxSessions,
     tasksPerSession: options.tasksPerSession,
+    budgetPct: options.budgetPct,
   });
 
   // If not enough tasks from live sessions, try corpus
@@ -299,6 +302,7 @@ export async function runQualityEval(options: RunnerOptions): Promise<void> {
     const corpusTasks = await prepareEvalTasks(CORPUS_DIR, config, {
       maxSessions: options.maxSessions * 4, // corpus has many small/snapshot files
       tasksPerSession: options.tasksPerSession,
+      budgetPct: options.budgetPct,
     });
     tasks = [...tasks, ...corpusTasks];
   }

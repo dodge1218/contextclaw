@@ -35,6 +35,7 @@ Options (watch):
 Options (eval):
   --sessions <n>        Max sessions to evaluate (default: 5)
   --tasks <n>           Tasks per session (default: 3)
+  --budget <pct>        Budget as % of full context (default: 50)
   --output <path>       Output JSON path (default: quality-eval-results.json)
   --verbose             Show per-task breakdown
   --judge-model <m>     Judge LLM model (default: llama-3.3-70b-versatile)
@@ -182,6 +183,7 @@ async function main() {
       await runQualityEval({
         maxSessions: parseFlag('--sessions', 5),
         tasksPerSession: parseFlag('--tasks', 3),
+        budgetPct: parseFlag('--budget', 50) / 100,
         outputPath: parseStringFlag('--output', 'quality-eval-results.json'),
         judgeModel: parseStringFlag('--judge-model', 'llama-3.3-70b-versatile'),
         judgeApiBase: parseStringFlag('--judge-api', 'https://api.groq.com/openai/v1'),
