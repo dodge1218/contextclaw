@@ -19,7 +19,7 @@ function judgeScenario(scenario) {
     if (scenario.prunedContext.some(m => JSON.stringify(m).toLowerCase().includes(w))) qWordsInPruned++;
   }
 
-  const contextPreservationScore = qWordsInFull > 0 ? (qWordsInPruned / qWordsInFull) : 1;
+  const contextPreservationScore = qWordsInFull > 0 ? Math.min(1, qWordsInPruned / qWordsInFull) : 1;
 
   // 2. Was bloat removed?
   // We check the reduction percentage

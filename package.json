@@ -1,7 +1,7 @@
 {
   "name": "contextclaw",
-  "version": "0.1.0",
-  "description": "Context orchestration layer for OpenClaw agents. Stop burning 90% of your tokens.",
+  "version": "0.2.0",
+  "description": "Stop sending Dockerfiles to your LLM 30 turns after you read them. Context management for AI agents.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -11,7 +11,9 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "inspect": "node dist/inspector/server.js",
-    "test": "vitest"
+    "test": "vitest run",
+    "test:plugin": "cd plugin && node --test",
+    "test:all": "vitest run && cd plugin && node --test"
   },
   "keywords": [
     "openclaw",
@@ -19,7 +21,13 @@
     "token-management",
     "ai-agent",
     "llm",
-    "orchestration"
+    "orchestration",
+    "context-eviction",
+    "prompt-caching",
+    "anthropic",
+    "claude",
+    "openai",
+    "multi-agent"
   ],
   "author": "DreamSiteBuilders <vonbrubeck@gmail.com>",
   "license": "MIT",
