@@ -1,5 +1,7 @@
 # 🧠 ContextClaw
 
+![CI](https://github.com/dodge1218/contextclaw/actions/workflows/ci.yml/badge.svg)
+
 **Stop sending Dockerfiles to the LLM 30 turns after you read them.**
 
 Context management plugin for [OpenClaw](https://github.com/openclaw/openclaw). Classifies every item in your context window by content type and applies retention policies. Files get truncated. Command output gets tailed. Your actual conversation stays intact.
@@ -104,12 +106,36 @@ plugin/
 
 Cold storage lives at `~/.openclaw/workspace/memory/cold/` as `.jsonl` files — truncated content with metadata for potential rehydration.
 
+## vs. Prompt Caching
+
+| | Raw Context | Anthropic Prompt Cache | ContextClaw | Both |
+|---|---|---|---|---|
+| Static prefix (system prompt) | Full price | **90% savings** | No change | **90% savings** |
+| File read from 20 turns ago | Full price | Full price (not prefix) | **Evicted** | **Evicted** |
+| 35K config dump (turn 2 of 50) | 35K tokens all 50 turns | 35K cached but still in context | **~200 chars after turn 3** | **~200 chars** |
+| Context overflow → compaction | Lossy, loses decisions | **Prevents overflow** | **Prevents overflow** | **Prevents overflow** |
+| Works on non-Anthropic providers | N/A | ❌ | ✅ | N/A |
+
+**They're complementary.** Prompt caching saves money on tokens you *should* send. ContextClaw saves money on tokens you *shouldn't* send.
+
+## Tests
+
+```
+47 tests passing
+├── src/__tests__/   11 vitest tests (budget, circuit-breaker)
+└── plugin/__tests__/ 36 node:test tests (classifier, policy, engine)
+```
+
 ## Roadmap
 
 - **v2:** Task/project stickers — tag context by project+task, load only relevant history
 - **v2:** Intent extractor as standalone plugin
 - **v2:** Auto-rehydration from cold storage
 - **v3:** Cross-framework `@contextclaw/core` extraction
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
