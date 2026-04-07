@@ -182,13 +182,20 @@ async function extractMessages(sessionPath: string): Promise<SessionMessage[]> {
  */
 function findEvalPoints(messages: SessionMessage[], maxTasks: number = 5): number[] {
   const points: number[] = [];
-  for (let i = 1; i < messages.length; i++) {
-    if (messages[i].role === 'assistant' && messages[i - 1].role === 'user') {
-      // Only pick substantive exchanges (not "ok" / "yes" / "NO_REPLY")
-      const userLen = messages[i - 1].content.trim().length;
-      const assistantLen = messages[i].content.trim().length;
-      if (userLen > 20 && assistantLen > 50) {
-        points.push(i);
+  // Find user→assistant pairs, skipping tool-result/system entries in between
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role !== 'user') continue;
+    const userLen = messages[i].content.trim().length;
+    if (userLen <= 20) continue;
+    // Find the next assistant reply (may not be adjacent — tool results in between)
+    for (let j = i + 1; j < messages.length && j <= i + 20; j++) {
+      if (messages[j].role === 'user') break; // hit next user msg, no assistant reply found
+      if (messages[j].role === 'assistant') {
+        const assistantLen = messages[j].content.trim().length;
+        if (assistantLen > 50) {
+          points.push(j); // the assistant index
+        }
+        break;
       }
     }
   }
@@ -213,8 +220,12 @@ async function buildCompressedContext(
   evalPoint: number,
   config: ContextClawConfig
 ): Promise<SessionMessage[]> {
-  const engine = new ContextClaw(config);
   const context = messages.slice(0, evalPoint);
+  const fullTokens = context.reduce((s, m) => s + m.tokens, 0);
+
+  // Set budget to 50% of full context so eviction actually fires
+  const tightConfig = { ...config, maxContextTokens: Math.max(2000, Math.floor(fullTokens * 0.5)) };
+  const engine = new ContextClaw(tightConfig);
 
   // Ingest all messages up to the eval point
   for (let i = 0; i < context.length; i++) {

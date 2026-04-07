@@ -237,12 +237,16 @@ async function getActualResponse(
     }
   }
 
-  // Find the eval points (same logic as quality-eval.ts)
+  // Find the eval points (same logic as quality-eval.ts — skip non-user/assistant entries)
   const points: number[] = [];
-  for (let i = 1; i < messages.length; i++) {
-    if (messages[i].role === 'assistant' && messages[i - 1].role === 'user') {
-      if (messages[i - 1].content.trim().length > 20 && messages[i].content.trim().length > 50) {
-        points.push(i);
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role !== 'user') continue;
+    if (messages[i].content.trim().length <= 20) continue;
+    for (let j = i + 1; j < messages.length && j <= i + 20; j++) {
+      if (messages[j].role === 'user') break;
+      if (messages[j].role === 'assistant') {
+        if (messages[j].content.trim().length > 50) points.push(j);
+        break;
       }
     }
   }
