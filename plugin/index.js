@@ -227,6 +227,17 @@ class ContextClawEngine {
         console.log(`[ContextClaw] ${summaryParts}`);
       }
 
+      // Write stats file for TUI footer
+      try {
+        const statsPath = join(homedir(), '.openclaw', '.contextclaw-stats.json');
+        writeFileSync(statsPath, JSON.stringify({
+          saved: stats.totalCharsSaved,
+          truncated: stats.totalTruncated,
+          assembles: stats.totalAssembleCalls,
+          ts: Date.now(),
+        }));
+      } catch { /* non-critical */ }
+
       return {
         messages: kept,
         estimatedTokens: 0, // not our job to estimate — gateway handles this
