@@ -1,0 +1,41 @@
+{
+  "name": "contextclaw",
+  "version": "0.2.0",
+  "description": "Stop sending Dockerfiles to your LLM 30 turns after you read them. Content-type classification and retention policies for LLM context windows.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./classifier": "./classifier.js",
+    "./policy": "./policy.js"
+  },
+  "files": [
+    "index.js",
+    "classifier.js",
+    "policy.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "llm",
+    "context-window",
+    "token-management",
+    "ai-agents",
+    "langchain",
+    "crewai",
+    "openai",
+    "anthropic",
+    "claude",
+    "context-pruning"
+  ],
+  "author": "Ryan Dodge <ryan@dreamsitebuilders.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dodge1218/contextclaw.git"
+  },
+  "homepage": "https://github.com/dodge1218/contextclaw",
+  "engines": {
+    "node": ">=18"
+  }
+}
