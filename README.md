@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/dodge1218/contextclaw/actions/workflows/ci.yml/badge.svg)](https://github.com/dodge1218/contextclaw/actions/workflows/ci.yml)
 
-**Stop sending Dockerfiles to your LLM 30 turns after you read them.**
+**Stop sending Dockerfiles to your LLM 30 turns after you read them. Stop hitting 429 rate limits because your context is 3x bigger than it needs to be.**
 
-Context management plugin for [OpenClaw](https://github.com/openclaw/openclaw). Classifies every item in your context window by content type and applies retention policies. Files get truncated. Command output gets tailed. Your conversation stays intact.
+Context management plugin for [OpenClaw](https://github.com/openclaw/openclaw). Classifies every item in your context window by content type and applies retention policies. Files get truncated. Command output gets tailed. Your conversation stays intact. Your API bill stays low.
 
 ## Live Dogfooding Results
 
@@ -21,10 +21,6 @@ Running on our own OpenClaw instance (11,300 items across 6 real sessions):
 | **Total** | **11,300** | **45.5M** | **5.5M** | **87.9%** |
 
 ![ContextClaw saving 956K tokens in OpenClaw TUI](assets/tui-tokens-saved.png)
-
-That's ~10M tokens saved. At Claude Opus rates ($15/MTok input), that's **~$150 not spent**.
-
-![ContextClaw live in the OpenClaw TUI — 956K tokens saved](assets/tui-tokens-saved.png)
 *Live savings counter running in the OpenClaw TUI footer*
 
 The key insight: **JSON schemas and file reads are 55% of all context waste**, and they compress at 92-95% with zero information loss.
@@ -124,7 +120,7 @@ They're complementary. Caching reduces cost on the static prefix. ContextClaw re
 ## Limitations (Honest)
 
 - **v1 is OpenClaw-only.** The plugin API is OpenClaw's `contextEngine` interface. Standalone use requires `packages/core/`.
-- **Keyword-based eval, not LLM-judged.** Our eval checks keyword preservation, not whether the LLM actually answers correctly post-truncation. We rely on re-read risk = 0 as a proxy.
+- **Eval is context-sufficiency judged, not full A/B.** Our LLM-judged eval scores whether compressed context preserves enough information for equivalent responses. At 80% budget: 44% equivalence rate. We're iterating.
 - **No rehydration yet.** Truncated content goes to cold storage but there's no auto-rehydration path when the agent needs it again.
 - **Aggressive on long sessions.** The 87.9% number is from very long sessions. Short sessions (<20 turns) see 10-30% savings.
 
