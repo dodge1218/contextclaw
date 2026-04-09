@@ -6,6 +6,10 @@
 
 Context management plugin for [OpenClaw](https://github.com/openclaw/openclaw). Classifies every item in your context window by content type and applies retention policies. Files get truncated. Command output gets tailed. Your conversation stays intact. Your API bill stays low.
 
+
+> **Part of the Token-Optimized Agentic Architecture.**
+> ContextClaw is Layer 1 (Real-Time Compression). See also: [Task-RAG MCP (Layer 2)](https://github.com/dodge1218/task-rag-mcp) | [Architecture Manifesto](https://github.com/dodge1218/agentic-efficiency)
+
 ## Live Dogfooding Results
 
 Running on our own OpenClaw instance (11,300 items across 6 real sessions):
