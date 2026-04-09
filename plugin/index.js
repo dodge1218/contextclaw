@@ -130,9 +130,8 @@ function flushToCold(sessionId, items, coldDir) {
         timestamp: item.msg.timestamp || new Date().toISOString(),
         originalChars: item.originalChars,
         action: item.action,
-        content: typeof item.msg.content === 'string'
-          ? item.msg.content.slice(0, 3000)
-          : JSON.stringify(item.msg.content || '').slice(0, 3000),
+        content: item.originalContent || (typeof item.msg.content === 'string' ? item.msg.content : JSON.stringify(item.msg.content || '')),
+        nonce: item.msg._truncated ? (typeof item.msg.content === 'string' ? item.msg.content : JSON.stringify(item.msg.content || '')).match(/ContextClaw:([a-f0-9]{8})/) ? (typeof item.msg.content === 'string' ? item.msg.content : JSON.stringify(item.msg.content || '')).match(/ContextClaw:([a-f0-9]{8})/)[1] : null : null,
       }));
       writeFileSync(file, lines.join('\n') + '\n');
     } catch (e) {

@@ -14,7 +14,7 @@ import { TYPES } from './classifier.js';
 
 function formatTruncationMarker(message) {
   const nonce = randomBytes(4).toString('hex');
-  return `[ContextClaw:${nonce} ${message}]`;
+  return `[ContextClaw:${nonce} ${message} (Run cc_rehydrate("${nonce}") to read full)]`;
 }
 
 // -------------------------------------------------------
@@ -237,7 +237,7 @@ export function applyPolicy(msg, turnsAgo, customPolicies = {}) {
         msg: { ...msg, content: truncatedContent, _truncated: true, _originalChars: originalChars },
         action: 'truncate',
         originalChars,
-        savedChars: originalChars - truncated.length,
+        savedChars: originalChars - truncated.length, originalContent: content,
       };
     }
 
