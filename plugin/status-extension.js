@@ -36,12 +36,21 @@ function updateStatus(ctx) {
 
   const saved = stats.saved || 0;
   const truncated = stats.truncated || 0;
+  const savingsUsd = stats.savingsUsd || 0;
+  const usingRealPricing = stats.usingRealPricing || false;
 
-  // Estimate $ saved: ~4 chars/token, $3/M input tokens (Claude Sonnet pricing)
-  const estimatedTokensSaved = Math.floor(saved / 4);
-  const dollarsSaved = (estimatedTokensSaved / 1_000_000) * 3;
+  let dollarDisplay;
+  if (usingRealPricing && savingsUsd > 0) {
+    // Real pricing from gateway's resolveModelCostConfig
+    dollarDisplay = `$${savingsUsd.toFixed(2)}`;
+  } else {
+    // Heuristic fallback: ~4 chars/token, $3/M input tokens
+    const estimatedTokensSaved = Math.floor(saved / 4);
+    const dollarsSaved = (estimatedTokensSaved / 1_000_000) * 3;
+    dollarDisplay = `~$${dollarsSaved.toFixed(2)}`;
+  }
 
-  const label = `🧠 ${formatNumber(saved)} chars saved · ~$${dollarsSaved.toFixed(2)} · ${formatNumber(truncated)} truncations`;
+  const label = `🧠 ${formatNumber(saved)} chars saved · ${dollarDisplay} · ${formatNumber(truncated)} truncations`;
   ctx.ui.setStatus(label);
 }
 

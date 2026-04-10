@@ -22,6 +22,7 @@ import {
   clearProviderCooldown,
 } from './config-patcher.js';
 import { guardHeartbeat, getStuckSessionSummary } from './heartbeat-guard.js';
+import { recordAssemblePoint, recordDashboardSnapshot, getEfficiencySummary, getEfficiencyData } from './efficiency-tracker.js';
 
 // -------------------------------------------------------
 // Lifetime stats — persisted across restarts
@@ -357,6 +358,17 @@ class ContextClawEngine {
         stats.totalEstimatedSavingsUsd += turnSavingsUsd;
       }
 
+      // Track efficiency data point
+      recordAssemblePoint({
+        sessionId,
+        charsSaved: totalSavedChars,
+        tokensSaved: Math.ceil(totalSavedChars / 4),
+        messageCount: messages.length,
+        truncatedCount: results.filter(r => r.action === 'truncate').length,
+        modelId: undefined, // filled by gateway if available
+        provider: undefined,
+      });
+
       // Telemetry
       if (this.config.enableTelemetry) {
         this._broadcast({
@@ -452,3 +464,10 @@ export {
   disableHeartbeat,
   enableHeartbeat,
 } from './heartbeat-guard.js';
+export {
+  recordDashboardSnapshot,
+  getEfficiencySummary,
+  getEfficiencyData,
+  MODEL_MULTIPLIERS,
+  PLAN_ALLOWANCES,
+} from './efficiency-tracker.js';
