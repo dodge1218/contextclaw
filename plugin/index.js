@@ -28,6 +28,33 @@ import { guardHeartbeat, getStuckSessionSummary } from './heartbeat-guard.js';
 // -------------------------------------------------------
 
 const STATS_PATH = join(homedir(), '.openclaw', '.contextclaw-stats.json');
+const HEURISTIC_COST_PER_MILLION = 3.0; // fallback when real pricing unavailable
+
+/** Resolve actual model pricing from gateway, or null if unavailable. */
+let _runtimeUsage = null;
+
+function setRuntimeUsage(usage) {
+  _runtimeUsage = usage;
+}
+
+/**
+ * Estimate cost saved from truncated chars.
+ * Uses real model pricing when available (via plugin runtime.usage API),
+ * falls back to heuristic ($3/M tokens ≈ Sonnet-class pricing).
+ */
+function estimateSavings(charsSaved, modelId, provider) {
+  const tokensSaved = Math.ceil(charsSaved / 4);
+  if (_runtimeUsage && _runtimeUsage.resolveModelCostConfig) {
+    try {
+      const costConfig = _runtimeUsage.resolveModelCostConfig({ provider, model: modelId });
+      if (costConfig) {
+        // Input tokens saved (truncated context is input)
+        return (tokensSaved * costConfig.input) / 1_000_000;
+      }
+    } catch { /* fall through to heuristic */ }
+  }
+  return (tokensSaved * HEURISTIC_COST_PER_MILLION) / 1_000_000;
+}
 
 function loadLifetimeStats() {
   try {
@@ -37,10 +64,11 @@ function loadLifetimeStats() {
       totalTruncated: prev.truncated || 0,
       totalCharsSaved: prev.saved || 0,
       totalAssembleCalls: prev.assembles || 0,
+      totalEstimatedSavingsUsd: prev.savingsUsd || 0,
       byType: {},
     };
   } catch {
-    return { totalTruncated: 0, totalCharsSaved: 0, totalAssembleCalls: 0, byType: {} };
+    return { totalTruncated: 0, totalCharsSaved: 0, totalAssembleCalls: 0, totalEstimatedSavingsUsd: 0, byType: {} };
   }
 }
 
@@ -310,6 +338,7 @@ class ContextClawEngine {
 
       // Stats
       let totalSavedChars = 0;
+      let turnSavingsUsd = 0;
       const typeCounts = {};
       for (const r of results) {
         const type = r.msg._type;
@@ -323,6 +352,10 @@ class ContextClawEngine {
           stats.totalCharsSaved += r.savedChars || 0;
         }
       }
+      if (totalSavedChars > 0) {
+        turnSavingsUsd = estimateSavings(totalSavedChars);
+        stats.totalEstimatedSavingsUsd += turnSavingsUsd;
+      }
 
       // Telemetry
       if (this.config.enableTelemetry) {
@@ -335,6 +368,8 @@ class ContextClawEngine {
           lifetimeCharsSaved: stats.totalCharsSaved,
           lifetimeTruncated: stats.totalTruncated,
           lifetimeAssembles: stats.totalAssembleCalls,
+          lifetimeSavingsUsd: stats.totalEstimatedSavingsUsd,
+          usingRealPricing: !!_runtimeUsage,
           providerHealth: getProviderHealthSummary(),
           stuckSessions: getStuckSessionSummary(),
         });
@@ -354,6 +389,8 @@ class ContextClawEngine {
           saved: stats.totalCharsSaved,
           truncated: stats.totalTruncated,
           assembles: stats.totalAssembleCalls,
+          savingsUsd: stats.totalEstimatedSavingsUsd,
+          usingRealPricing: !!_runtimeUsage,
           ts: Date.now(),
         }));
       } catch { /* non-critical */ }
@@ -395,6 +432,10 @@ class ContextClawEngine {
 
 export default function setup(runtime) {
   const config = runtime.pluginConfig || {};
+  // Capture the usage API if available (requires openclaw with plugin-cost-api)
+  if (runtime.usage) {
+    setRuntimeUsage(runtime.usage);
+  }
   runtime.registerContextEngine('contextclaw', () => new ContextClawEngine(config));
 }
 
