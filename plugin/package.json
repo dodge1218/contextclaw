@@ -4,11 +4,14 @@
   "type": "module",
   "main": "index.js",
   "openclaw": {
-    "extensions": ["./index.js"],
+    "extensions": ["./status-extension.js"],
     "compat": {
       "pluginApi": ">=2026.3.24-beta.2",
       "minGatewayVersion": "2026.3.24-beta.2"
     }
+  },
+  "pi": {
+    "extensions": ["./status-extension.js"]
   },
   "dependencies": {
     "ws": "^8.20.0"

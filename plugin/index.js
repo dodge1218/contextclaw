@@ -14,6 +14,14 @@ import { WebSocketServer } from 'ws';
 import { get_encoding } from 'tiktoken';
 import { classifyAll, TYPES } from './classifier.js';
 import { applyPolicy, DEFAULT_POLICIES } from './policy.js';
+import {
+  handleQuotaRotation,
+  getProviderHealthSummary,
+  getAvailableModels,
+  restoreProvider,
+  clearProviderCooldown,
+} from './config-patcher.js';
+import { guardHeartbeat, getStuckSessionSummary } from './heartbeat-guard.js';
 
 // -------------------------------------------------------
 // Lifetime stats — persisted across restarts
@@ -210,6 +218,29 @@ class ContextClawEngine {
     return { bootstrapped: true };
   }
 
+  /**
+   * Handle provider quota/rate-limit errors.
+   * Called by the gateway when a model request fails.
+   * Returns rotation result or null.
+   */
+  handleProviderError(modelId, errorMessage) {
+    const result = handleQuotaRotation(modelId, errorMessage);
+    if (result && result.rotated) {
+      this._broadcast({
+        type: 'QUOTA_ROTATION',
+        ...result,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Acknowledge a successful provider request (clears cooldown).
+   */
+  handleProviderSuccess(modelId) {
+    clearProviderCooldown(modelId);
+  }
+
   async ingest({ sessionId }) {
     const s = this._sessions.get(sessionId) || { turns: 0 };
     s.turns++;
@@ -235,6 +266,15 @@ class ContextClawEngine {
   async assemble({ sessionId, messages, tokenBudget }) {
     try {
       stats.totalAssembleCalls++;
+
+      // Step 0: heartbeat guard — detect stuck tool sessions
+      const heartbeatWarning = guardHeartbeat(sessionId, messages);
+      if (heartbeatWarning) {
+        this._broadcast({
+          type: 'HEARTBEAT_WARNING',
+          ...heartbeatWarning,
+        });
+      }
 
       // Step 1: classify
       const classified = classifyAll(messages);
@@ -295,6 +335,8 @@ class ContextClawEngine {
           lifetimeCharsSaved: stats.totalCharsSaved,
           lifetimeTruncated: stats.totalTruncated,
           lifetimeAssembles: stats.totalAssembleCalls,
+          providerHealth: getProviderHealthSummary(),
+          stuckSessions: getStuckSessionSummary(),
         });
       }
 
@@ -357,3 +399,15 @@ export default function setup(runtime) {
 }
 
 export { ContextClawEngine, computeTurnsAgo };
+export {
+  handleQuotaRotation,
+  getProviderHealthSummary,
+  getAvailableModels,
+  restoreProvider,
+} from './config-patcher.js';
+export {
+  guardHeartbeat,
+  getStuckSessionSummary,
+  disableHeartbeat,
+  enableHeartbeat,
+} from './heartbeat-guard.js';
