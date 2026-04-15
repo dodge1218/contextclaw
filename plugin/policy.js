@@ -209,7 +209,16 @@ export function applyPolicy(msg, turnsAgo, customPolicies = {}) {
   // Past keepTurns — apply truncation or eviction
   if (policy.truncateOlder || policy.truncateAfter) {
     const maxChars = policy.maxCharsOlder || policy.maxCharsAfter || 500;
-    const extractFn = EXTRACTORS[policy.extractPattern] || extractBookends;
+
+    // -------------------------------------------------------
+    // STRUCTURAL SAFETY: If content is an array containing
+    // tool_use or tool_result blocks, truncate INSIDE each
+    // block's content/text field — never flatten the structure.
+    // This preserves tool_use_id and tool_result pairing.
+    // -------------------------------------------------------
+    if (contentIsArray && hasStructuralBlocks(msg.content)) {
+      return truncateStructuralBlocks(msg, maxChars, policy, originalChars);
+    }
 
     let truncated;
     if (policy.extractPattern === 'tail') {
@@ -246,5 +255,77 @@ export function applyPolicy(msg, turnsAgo, customPolicies = {}) {
   }
 
   // No truncation policy — keep
+  return { msg, action: 'keep', originalChars };
+}
+
+// -------------------------------------------------------
+// Structural block helpers — preserve tool_use/tool_result
+// -------------------------------------------------------
+
+/**
+ * Check if a content array contains structural blocks that must
+ * not be flattened (tool_use, tool_result).
+ */
+function hasStructuralBlocks(content) {
+  if (!Array.isArray(content)) return false;
+  return content.some(block =>
+    block && typeof block === 'object' &&
+    (block.type === 'tool_use' || block.type === 'tool_result')
+  );
+}
+
+/**
+ * Truncate content inside structural blocks while preserving
+ * the block wrappers and all structural fields (type, id,
+ * tool_use_id, name, input).
+ */
+function truncateStructuralBlocks(msg, maxChars, policy, originalChars) {
+  let totalSaved = 0;
+  const newContent = msg.content.map(block => {
+    if (!block || typeof block !== 'object') return block;
+
+    // tool_use blocks: preserve id, name, input — truncate only nested text
+    if (block.type === 'tool_use') {
+      // tool_use blocks are usually small; preserve them entirely
+      return { ...block };
+    }
+
+    // tool_result blocks: preserve type, tool_use_id — truncate content string
+    if (block.type === 'tool_result') {
+      const innerContent = typeof block.content === 'string' ? block.content : JSON.stringify(block.content || '');
+      if (innerContent.length <= maxChars) return { ...block };
+
+      const truncatedInner = extractBookends(innerContent, maxChars);
+      totalSaved += innerContent.length - truncatedInner.length;
+
+      return {
+        ...block,
+        content: truncatedInner,
+      };
+    }
+
+    // text blocks: truncate normally
+    if (block.type === 'text' && typeof block.text === 'string') {
+      if (block.text.length <= maxChars) return { ...block };
+      const truncatedText = extractBookends(block.text, maxChars);
+      totalSaved += block.text.length - truncatedText.length;
+      return { ...block, text: truncatedText };
+    }
+
+    // Unknown block types: pass through untouched
+    return { ...block };
+  });
+
+  // Only report truncation if we actually saved something meaningful
+  if (totalSaved > originalChars * 0.2) {
+    return {
+      msg: { ...msg, content: newContent, _truncated: true, _originalChars: originalChars },
+      action: 'truncate',
+      originalChars,
+      savedChars: totalSaved,
+      originalContent: JSON.stringify(msg.content),
+    };
+  }
+
   return { msg, action: 'keep', originalChars };
 }

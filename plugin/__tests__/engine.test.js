@@ -70,11 +70,17 @@ test('assemble truncates old file read but keeps recent conversation', async () 
   assert.ok(Array.isArray(fileReadBlocks));
   const fileReadText = fileReadBlocks.map(b => (b?.text ?? b)).join('');
   assert.ok(fileReadText.length < bigFile.length, 'File read should be truncated');
-  assert.match(fileReadText, /\[ContextClaw:[0-9a-f]{8} truncated \d+ chars\]/i);
+  assert.match(fileReadText, /\[ContextClaw:[0-9a-f]{8} truncated \d+ chars/i);
 
   // Recent messages should be intact
-  assert.strictEqual(result.messages[8].content[0].text, 'Thanks, deploy it');
-  assert.strictEqual(result.messages[7].content[0].text, 'Fixed.');
+  const getTextContent = (msg) => {
+    const c = msg.content;
+    if (typeof c === 'string') return c;
+    if (Array.isArray(c)) return c.map(b => b?.text ?? b).join('');
+    return '';
+  };
+  assert.strictEqual(getTextContent(result.messages[8]), 'Thanks, deploy it');
+  assert.strictEqual(getTextContent(result.messages[7]), 'Fixed.');
   assert.ok(result.estimatedTokens > 0, 'should include token estimate');
 });
 

@@ -23,17 +23,8 @@ import {
 } from './config-patcher.js';
 import { guardHeartbeat, getStuckSessionSummary } from './heartbeat-guard.js';
 import { recordAssemblePoint, recordDashboardSnapshot, getEfficiencySummary, getEfficiencyData } from './efficiency-tracker.js';
-
-const { buildMemorySystemPromptAddition, delegateCompactionToRuntime } = await import('openclaw/plugin-sdk/core')
-  .catch(() => ({
-    buildMemorySystemPromptAddition: () => '',
-    delegateCompactionToRuntime: async () => ({ ok: false, compacted: false, reason: 'OpenClaw runtime compaction unavailable' }),
-  }));
-
-const { definePluginEntry } = await import('openclaw/plugin-sdk/plugin-entry')
-  .catch(() => ({
-    definePluginEntry: entry => entry,
-  }));
+import { buildMemorySystemPromptAddition, delegateCompactionToRuntime } from 'openclaw/plugin-sdk/core';
+import { definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
 
 // -------------------------------------------------------
 // Lifetime stats — persisted across restarts
