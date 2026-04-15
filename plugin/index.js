@@ -229,9 +229,14 @@ class ContextClawEngine {
   _initWs() {
     if (this.wss) return;
     try {
-      this.wss = new WebSocketServer({ port: this.config.wsPort });
+      this.wss = new WebSocketServer({ port: this.config.wsPort, host: '127.0.0.1' });
       this.wss.on('error', (e) => {
-        console.warn(`[ContextClaw] WS error port ${this.config.wsPort}: ${e.message}`);
+        if (e.code === 'EADDRINUSE') {
+          console.warn(`[ContextClaw] WS port ${this.config.wsPort} in use — telemetry disabled (non-fatal)`);
+        } else {
+          console.warn(`[ContextClaw] WS error: ${e.message}`);
+        }
+        try { this.wss?.close(); } catch (_) {}
         this.wss = null;
       });
       this.wss.on('connection', ws => {
@@ -239,6 +244,7 @@ class ContextClawEngine {
         ws.on('close', () => this.clients.delete(ws));
       });
     } catch (e) {
+      console.warn(`[ContextClaw] WS init failed: ${e.message} — telemetry disabled (non-fatal)`);
       this.wss = null;
     }
   }
@@ -346,8 +352,22 @@ class ContextClawEngine {
         // Strip internal metadata before returning
         const { _type, _chars, _truncated, _originalChars, ...clean } = r.msg;
         const normalized = { ...clean };
-        normalized.content = ensureContentBlocks(normalized.content);
-        estimatedTokens += countContentTokens(normalized.content);
+
+        // CRITICAL: Preserve original content shape per pi-agent-core types.
+        // - UserMessage.content: string | (TextContent | ImageContent)[]  — both valid
+        // - AssistantMessage.content: (TextContent | ThinkingContent | ToolCall)[]  — must be array
+        // - ToolResultMessage.content: (TextContent | ImageContent)[]  — must be array
+        // Only normalize to array for assistant/toolResult if content became a string (e.g. after truncation)
+        if (normalized.role === 'user') {
+          // User messages: keep string as string, array as array (both valid)
+          estimatedTokens += typeof normalized.content === 'string'
+            ? countTokens(normalized.content)
+            : countContentTokens(ensureContentBlocks(normalized.content));
+        } else {
+          // assistant / toolResult / system: must be array of content blocks
+          normalized.content = ensureContentBlocks(normalized.content);
+          estimatedTokens += countContentTokens(normalized.content);
+        }
         return normalized;
       });
 
@@ -430,14 +450,13 @@ class ContextClawEngine {
         }),
       };
     } catch (e) {
-      console.error('[ContextClaw] assemble error:', e);
+      console.error('[ContextClaw] assemble error (falling back to pass-through):', e.message);
+      // Return original messages unmodified — the gateway's own pipeline will handle them.
+      // This ensures ContextClaw can NEVER crash the gateway.
       return {
         messages,
         estimatedTokens: 0,
-        systemPromptAddition: buildMemorySystemPromptAddition({
-          availableTools: availableTools ?? new Set(),
-          citationsMode,
-        }),
+        systemPromptAddition: '',
       };
     }
   }
