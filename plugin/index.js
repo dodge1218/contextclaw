@@ -24,6 +24,17 @@ import {
 import { guardHeartbeat, getStuckSessionSummary } from './heartbeat-guard.js';
 import { recordAssemblePoint, recordDashboardSnapshot, getEfficiencySummary, getEfficiencyData } from './efficiency-tracker.js';
 
+const { buildMemorySystemPromptAddition, delegateCompactionToRuntime } = await import('openclaw/plugin-sdk/core')
+  .catch(() => ({
+    buildMemorySystemPromptAddition: () => '',
+    delegateCompactionToRuntime: async () => ({ ok: false, compacted: false, reason: 'OpenClaw runtime compaction unavailable' }),
+  }));
+
+const { definePluginEntry } = await import('openclaw/plugin-sdk/plugin-entry')
+  .catch(() => ({
+    definePluginEntry: entry => entry,
+  }));
+
 // -------------------------------------------------------
 // Lifetime stats — persisted across restarts
 // -------------------------------------------------------
@@ -270,10 +281,13 @@ class ContextClawEngine {
     clearProviderCooldown(modelId);
   }
 
-  async ingest({ sessionId }) {
-    const s = this._sessions.get(sessionId) || { turns: 0 };
-    s.turns++;
-    this._sessions.set(sessionId, s);
+  async ingest(params = {}) {
+    const sessionId = params?.sessionId;
+    if (sessionId) {
+      const s = this._sessions.get(sessionId) || { turns: 0 };
+      s.turns++;
+      this._sessions.set(sessionId, s);
+    }
     return { ingested: true };
   }
 
@@ -292,7 +306,7 @@ class ContextClawEngine {
    * 4. Cold-store anything truncated
    * 5. Return the lean message set
    */
-  async assemble({ sessionId, messages, tokenBudget }) {
+  async assemble({ messages = [], availableTools, citationsMode, sessionId = 'unknown' } = {}) {
     try {
       stats.totalAssembleCalls++;
 
@@ -410,15 +424,26 @@ class ContextClawEngine {
       return {
         messages: kept,
         estimatedTokens,
+        systemPromptAddition: buildMemorySystemPromptAddition({
+          availableTools: availableTools ?? new Set(),
+          citationsMode,
+        }),
       };
     } catch (e) {
       console.error('[ContextClaw] assemble error:', e);
-      return { messages, estimatedTokens: 0 };
+      return {
+        messages,
+        estimatedTokens: 0,
+        systemPromptAddition: buildMemorySystemPromptAddition({
+          availableTools: availableTools ?? new Set(),
+          citationsMode,
+        }),
+      };
     }
   }
 
-  async compact() {
-    return { ok: true, compacted: false, reason: 'ContextClaw uses type-based truncation, not compaction' };
+  async compact(params) {
+    return await delegateCompactionToRuntime(params);
   }
 
   async afterTurn() {
@@ -442,14 +467,24 @@ class ContextClawEngine {
 // Plugin registration
 // -------------------------------------------------------
 
-export default function setup(runtime) {
-  const config = runtime.pluginConfig || {};
-  // Capture the usage API if available (requires openclaw with plugin-cost-api)
-  if (runtime.usage) {
-    setRuntimeUsage(runtime.usage);
-  }
-  runtime.registerContextEngine('contextclaw', () => new ContextClawEngine(config));
-}
+export default definePluginEntry({
+  id: 'contextclaw',
+  name: 'ContextClaw',
+  description: 'Context budget engine',
+  register(api) {
+    const config = api.pluginConfig || {};
+    // Capture the usage API if available (requires openclaw with plugin-cost-api)
+    if (api.usage) {
+      setRuntimeUsage(api.usage);
+    }
+    if (typeof api.registerContextEngine === 'function') {
+      api.registerContextEngine('contextclaw', () => new ContextClawEngine(config));
+      console.log('[ContextClaw] context engine registered successfully');
+    } else {
+      console.warn('[ContextClaw] api.registerContextEngine not available — api keys:', Object.keys(api).join(', '));
+    }
+  },
+});
 
 export { ContextClawEngine, computeTurnsAgo };
 export {
