@@ -54,6 +54,7 @@ node packages/core/dist/cli.js mission-review --load /tmp/contextclaw-ledger-dem
 node packages/core/dist/cli.js mission-review --load /tmp/contextclaw-ledger-demo.json --format json
 node packages/core/dist/cli.js mission-why --load /tmp/contextclaw-ledger-demo.json
 node packages/core/dist/cli.js mission-approve --load /tmp/contextclaw-ledger-demo.json --pass <blocked-pass-id> --increase-budget 0.25
+node packages/core/dist/cli.js mission-reject --load /tmp/contextclaw-ledger-demo.json --pass <pass-id> --reason "too broad"
 ```
 
 > Honest status: the mission-ledger prototype is a local CLI in `prototypes/contextclaw_mvp.py`. The OpenClaw context-engine plugin remains separate and should not be re-enabled in production until the registration/compatibility issue is fixed.

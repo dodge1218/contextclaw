@@ -224,7 +224,11 @@ export class MissionLedger {
         reason: pass.reason,
       },
       artifacts: pass.manifest.artifacts,
-      nextAction: pass.decision === 'blocked' ? 'Approve once, reduce scope, or keep waiting' : 'Ready for model/tool execution or next pass',
+      nextAction: pass.decision === 'blocked'
+        ? 'Approve once, reduce scope, or keep waiting'
+        : pass.decision === 'rejected'
+          ? 'Revise scope, create a smaller pass, or keep mission paused'
+          : 'Ready for model/tool execution or next pass',
     };
   }
 
@@ -244,6 +248,16 @@ export class MissionLedger {
     mission.state = 'running';
     pass.decision = 'approved';
     pass.reason = 'manual approve once';
+    return pass;
+  }
+
+  rejectPass(passId: string, reason = 'manual reject'): PassPlan {
+    const pass = this.mustPass(passId);
+    const mission = this.mustMission(pass.missionId);
+    if (pass.decision !== 'blocked' && pass.decision !== 'allowed') throw new Error(`Pass cannot be rejected from state ${pass.decision}: ${pass.id}`);
+    pass.decision = 'rejected';
+    pass.reason = reason;
+    mission.state = 'paused';
     return pass;
   }
 

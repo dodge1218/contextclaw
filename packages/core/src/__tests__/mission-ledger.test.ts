@@ -77,6 +77,28 @@ describe('MissionLedger', () => {
     expect(ledger.reviewCard(pass.id).nextAction).toMatch(/Ready/);
   });
 
+  it('rejects passes and pauses the mission', () => {
+    const ledger = new MissionLedger();
+    const mission = ledger.createMission({ id: 'mis_reject', objective: 'reject mission', budget: 0.05, sticker: 'REJECT' });
+    ledger.addArtifact({ missionId: 'mis_reject', type: 'note', text: 'small scope', sticker: 'REJECT' });
+    const pass = ledger.planPass({
+      missionId: 'mis_reject',
+      role: 'planner',
+      model: 'local/free',
+      artifactIds: 'all',
+      prompt: 'pass to reject',
+      estimatedTokensOut: 100,
+      maxSpend: 0.05,
+      sticker: 'REJECT',
+    });
+
+    const rejected = ledger.rejectPass(pass.id, 'too broad');
+    expect(rejected.decision).toBe('rejected');
+    expect(rejected.reason).toBe('too broad');
+    expect(mission.state).toBe('paused');
+    expect(ledger.reviewCard(pass.id).nextAction).toMatch(/Revise scope/);
+  });
+
   it('blocks over-budget passes and explains why', () => {
     const ledger = new MissionLedger();
     ledger.createMission({ id: 'mis_demo', objective: 'demo mission', budget: 0.01, sticker: 'DEMO' });
