@@ -56,6 +56,27 @@ describe('MissionLedger', () => {
     }
   });
 
+  it('approves blocked passes when budget is increased', () => {
+    const ledger = new MissionLedger();
+    ledger.createMission({ id: 'mis_approve', objective: 'approve mission', budget: 0.01, sticker: 'APPROVE' });
+    ledger.addArtifact({ missionId: 'mis_approve', type: 'note', text: 'short context', sticker: 'APPROVE' });
+    const pass = ledger.planPass({
+      missionId: 'mis_approve',
+      role: 'planner',
+      model: 'premium/frontier',
+      artifactIds: 'all',
+      prompt: 'expensive pass',
+      estimatedTokensOut: 100_000,
+      maxSpend: 0.001,
+      sticker: 'APPROVE',
+    });
+
+    expect(pass.decision).toBe('blocked');
+    const approved = ledger.approvePass(pass.id, { increaseBudget: 0.25 });
+    expect(approved.decision).toBe('approved');
+    expect(ledger.reviewCard(pass.id).nextAction).toMatch(/Ready/);
+  });
+
   it('blocks over-budget passes and explains why', () => {
     const ledger = new MissionLedger();
     ledger.createMission({ id: 'mis_demo', objective: 'demo mission', budget: 0.01, sticker: 'DEMO' });

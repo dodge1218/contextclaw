@@ -27,6 +27,7 @@ Commands:
   mission-demo                  Demo mission ledger budget gate + review feed
   mission-review --load <file>  Print review cards from a saved mission ledger
   mission-why --load <file>     Explain the latest blocked pass in a saved ledger
+  mission-approve --load <file> Approve a blocked pass in a saved ledger
   clear                         Clear the current session
   chat                          Start interactive chat (default)
   help                          Show this help
@@ -60,6 +61,7 @@ Examples:
   cc mission-review --load /tmp/ledger.json
   cc mission-review --load /tmp/ledger.json --format json
   cc mission-why --load /tmp/ledger.json
+  cc mission-approve --load /tmp/ledger.json --pass <id> --increase-budget 0.25
 `);
 }
 
@@ -277,6 +279,18 @@ async function main() {
       } else {
         console.log(passes.map((pass) => ledger.renderReviewCard(pass.id)).join('\n\n---\n\n'));
       }
+      break;
+    }
+
+    case 'mission-approve': {
+      const path = requireStringFlag('--load');
+      const ledger = MissionLedger.load(path);
+      const passId = requireStringFlag('--pass');
+      const increaseBudget = Number(parseStringFlag('--increase-budget', '0')) || 0;
+      const approved = ledger.approvePass(passId, { increaseBudget });
+      ledger.save(path);
+      console.log(`Approved ${approved.id}. Updated ledger saved to ${path}.`);
+      console.log(ledger.renderReviewCard(approved.id));
       break;
     }
 

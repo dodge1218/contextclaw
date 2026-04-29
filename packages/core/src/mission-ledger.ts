@@ -228,6 +228,25 @@ export class MissionLedger {
     };
   }
 
+  approvePass(passId: string, options: { increaseBudget?: number } = {}): PassPlan {
+    const pass = this.mustPass(passId);
+    const mission = this.mustMission(pass.missionId);
+    if (pass.decision !== 'blocked') throw new Error(`Pass is not blocked: ${pass.id}`);
+    const increaseBudget = options.increaseBudget ?? 0;
+    if (increaseBudget > 0) {
+      mission.budgetTotal += increaseBudget;
+      mission.budgetRemaining += increaseBudget;
+    }
+    if (pass.estimatedCost > mission.budgetRemaining) {
+      throw new Error(`Approval needs more budget: estimated $${pass.estimatedCost.toFixed(6)}, remaining $${mission.budgetRemaining.toFixed(6)}`);
+    }
+    mission.budgetRemaining -= pass.estimatedCost;
+    mission.state = 'running';
+    pass.decision = 'approved';
+    pass.reason = 'manual approve once';
+    return pass;
+  }
+
   renderReviewCard(passId: string): string {
     const card = this.reviewCard(passId);
     return [
