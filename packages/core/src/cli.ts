@@ -24,7 +24,8 @@ Commands:
   status                        Quick snapshot of current session health
   eval [--verbose]              Run quality eval (proves compression doesn't degrade output)
   inspect                       Start inspector web UI on port 3333
-  mission-demo                  Demo mission ledger budget gate + review feed
+  ledger                        Friendly local ledger demo (no model call)
+  mission-demo                  Developer demo: mission ledger budget gate + review feed
   mission-review --load <file>  Print review cards from a saved mission ledger
   mission-why --load <file>     Explain the latest blocked pass in a saved ledger
   mission-approve --load <file> Approve a blocked pass in a saved ledger
@@ -60,7 +61,8 @@ Examples:
   cc status                  Quick health check
   cc eval                    Run quality eval with defaults
   cc eval --verbose          Eval with per-task breakdown
-  cc mission-demo            Show mission ledger pass governance
+  cc ledger                  Friendly local ledger demo, no model call
+  cc mission-demo            Developer JSON demo, no model call
   cc mission-demo --save /tmp/ledger.json
   cc mission-review --load /tmp/ledger.json
   cc mission-review --load /tmp/ledger.json --format json
@@ -218,6 +220,72 @@ async function main() {
         judgeApiKey,
         verbose: process.argv.includes('--verbose'),
       });
+      break;
+    }
+
+    case 'ledger': {
+      const ledger = new MissionLedger();
+      const mission = ledger.createMission({
+        id: 'mis_local_demo',
+        objective: 'Show predictable spend before a model call',
+        budget: 0.05,
+        sticker: 'LOCAL-DEMO',
+        acceptanceCriteria: 'Explain allow/block decisions without calling a model',
+        premiumUnitBudget: 3,
+        unitCostBasis: 'fixed-prompt',
+      });
+      ledger.addArtifact({
+        missionId: mission.id,
+        type: 'note',
+        text: 'Small current task context. This is an artifact in the ledger, not a model prompt.',
+        summary: 'Small current task context',
+        sticker: 'LOCAL-DEMO',
+      });
+      const allowed = ledger.planPass({
+        missionId: mission.id,
+        role: 'planner',
+        model: 'example/local-free',
+        artifactIds: 'all',
+        prompt: 'Plan one small bounded next step.',
+        estimatedTokensOut: 500,
+        maxSpend: 0.05,
+        maxPremiumUnits: 1,
+        unitCostBasis: 'fixed-prompt',
+        sticker: 'LOCAL-DEMO',
+      });
+      const blocked = ledger.planPass({
+        missionId: mission.id,
+        role: 'planner',
+        model: 'example/premium-frontier',
+        artifactIds: 'all',
+        prompt: 'Pretend this is a huge premium synthesis pass.',
+        estimatedTokensOut: 100_000,
+        maxSpend: 0.001,
+        maxPremiumUnits: 0.3,
+        unitCostBasis: 'fixed-prompt',
+        fixedUnitsPerPrompt: 1,
+        sticker: 'LOCAL-DEMO-BLOCK',
+      });
+
+      const savePath = parseStringFlag('--save', '');
+      if (savePath) ledger.save(savePath);
+
+      console.log('\nContextClaw local ledger demo');
+      console.log('No model was called. This only estimates and gates hypothetical passes.');
+      console.log(`Mission: ${mission.objective}`);
+      console.log(`Ledger: ${savePath || '(not saved; add --save /tmp/ledger.json)'}`);
+      console.log('\nAllowed pass:');
+      console.log(`- Model label: ${allowed.model}`);
+      console.log(`- Estimated spend: $${allowed.estimatedCost.toFixed(6)}`);
+      console.log(`- Premium units: ${allowed.estimatedPremiumUnits?.toFixed(3)} / max ${allowed.maxPremiumUnits?.toFixed(3)}`);
+      console.log(`- Decision: ${allowed.decision}`);
+      console.log('\nBlocked pass:');
+      console.log(`- Model label: ${blocked.model}`);
+      console.log(`- Estimated spend: $${blocked.estimatedCost.toFixed(6)} (max $${blocked.maxSpend.toFixed(6)})`);
+      console.log(`- Premium units: ${blocked.estimatedPremiumUnits?.toFixed(3)} / max ${blocked.maxPremiumUnits?.toFixed(3)}`);
+      console.log(`- Decision: ${blocked.decision} (${blocked.reason})`);
+      console.log('\nWhat this means: ContextClaw can say “this pass is too expensive / too many premium units” before execution.');
+      console.log('Next real integration is wiring actual OpenClaw/provider receipts into this ledger.');
       break;
     }
 

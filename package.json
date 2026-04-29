@@ -11,6 +11,7 @@
     "build": "tsc -p packages/core/tsconfig.json",
     "dev": "tsc --watch",
     "inspect": "node dist/inspector/server.js",
+    "ledger": "npm run build && node packages/core/dist/cli.js ledger",
     "demo:mission-ledger": "bash prototypes/demo_mission_ledger.sh",
     "demo:mission-ledger:ts": "npm run build && node packages/core/dist/cli.js mission-demo",
     "mvp:help": "python3 prototypes/contextclaw_mvp.py --help",

@@ -30,7 +30,15 @@ This turns invisible prompt spend into accountable work units:
 
 The first local MVP dogfoods this loop before returning to high-throughput security research. See [`docs/MISSION_LEDGER_MVP.md`](docs/MISSION_LEDGER_MVP.md), [`docs/PREDICTABLE_SPEND_MODEL.md`](docs/PREDICTABLE_SPEND_MODEL.md), and [`docs/MVP_REVIEW_FEED_DEMO.md`](docs/MVP_REVIEW_FEED_DEMO.md).
 
-Try the local prototype:
+Try the friendly local demo first:
+
+```bash
+npm run ledger
+```
+
+This does **not** call a model. It only shows how ContextClaw would estimate and gate hypothetical passes before execution.
+
+Developer demos:
 
 ```bash
 npm run mvp:help
