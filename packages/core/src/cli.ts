@@ -58,6 +58,7 @@ Examples:
   cc mission-demo            Show mission ledger pass governance
   cc mission-demo --save /tmp/ledger.json
   cc mission-review --load /tmp/ledger.json
+  cc mission-review --load /tmp/ledger.json --format json
   cc mission-why --load /tmp/ledger.json
 `);
 }
@@ -269,8 +270,13 @@ async function main() {
     case 'mission-review': {
       const ledger = MissionLedger.load(requireStringFlag('--load'));
       const limit = parseFlag('--limit', 10);
+      const format = parseStringFlag('--format', 'markdown');
       const passes = [...ledger.passes.values()].slice(-limit).reverse();
-      console.log(JSON.stringify(passes.map((pass) => ledger.reviewCard(pass.id)), null, 2));
+      if (format === 'json') {
+        console.log(JSON.stringify(passes.map((pass) => ledger.reviewCard(pass.id)), null, 2));
+      } else {
+        console.log(passes.map((pass) => ledger.renderReviewCard(pass.id)).join('\n\n---\n\n'));
+      }
       break;
     }
 

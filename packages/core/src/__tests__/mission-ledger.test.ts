@@ -49,6 +49,7 @@ describe('MissionLedger', () => {
 
       const loaded = MissionLedger.load(path);
       expect(loaded.reviewCard(pass.id).title).toBe('persist mission');
+      expect(loaded.renderReviewCard(pass.id)).toContain('Next action');
       expect(loaded.explain(pass.id)).toContain('within budget');
     } finally {
       rmSync(dir, { recursive: true, force: true });

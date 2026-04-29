@@ -51,6 +51,7 @@ The Python demo creates a temporary mission, ingests docs as artifacts, allows o
 npm run build
 node packages/core/dist/cli.js mission-demo --save /tmp/contextclaw-ledger-demo.json
 node packages/core/dist/cli.js mission-review --load /tmp/contextclaw-ledger-demo.json
+node packages/core/dist/cli.js mission-review --load /tmp/contextclaw-ledger-demo.json --format json
 node packages/core/dist/cli.js mission-why --load /tmp/contextclaw-ledger-demo.json
 ```
 

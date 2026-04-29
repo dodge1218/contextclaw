@@ -228,6 +228,23 @@ export class MissionLedger {
     };
   }
 
+  renderReviewCard(passId: string): string {
+    const card = this.reviewCard(passId);
+    return [
+      `## ${card.title}`,
+      `Mission: \`${card.mission.id}\` | Sticker: \`${card.mission.sticker ?? 'none'}\` | State: **${card.mission.state}**`,
+      `Pass: \`${card.pass.id}\` | Role: \`${card.pass.role}\` | Model: \`${card.pass.model}\` | Decision: **${card.pass.decision}**`,
+      `Spend: estimated \`$${card.pass.estimatedCost.toFixed(6)}\` | pass max \`$${card.pass.maxSpend.toFixed(6)}\` | mission remaining \`$${card.mission.budgetRemaining.toFixed(6)}\``,
+      `Tokens: ${card.pass.estimatedTokensIn} in / ${card.pass.estimatedTokensOut} out`,
+      `Reason: ${card.pass.reason ?? 'within budget'}`,
+      '',
+      'Artifacts:',
+      ...card.artifacts.map((artifact) => `- \`${artifact.id}\` [${artifact.sticker ?? 'no-sticker'}], ~${artifact.tokens} tokens: ${artifact.summary.slice(0, 120)}`),
+      '',
+      `Next action: **${card.nextAction}**`,
+    ].join('\n');
+  }
+
   private mustMission(id: string): Mission {
     const mission = this.missions.get(id);
     if (!mission) throw new Error(`No mission: ${id}`);
