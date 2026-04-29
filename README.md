@@ -10,6 +10,28 @@ Context management plugin for [OpenClaw](https://github.com/openclaw/openclaw). 
 > **Part of the Token-Optimized Agentic Architecture.**
 > ContextClaw is Layer 1 (Real-Time Compression). See also: [Task-RAG MCP (Layer 2)](https://github.com/dodge1218/task-rag-mcp) | [Architecture Manifesto](https://github.com/dodge1218/agentic-efficiency)
 
+## New Direction: Cost Defense With Memory
+
+ContextClaw is no longer just a token trimmer. The current product direction is **cost defense with memory for agentic work**.
+
+The compression plugin remains Layer 1: classify context by content type, truncate stale tool output, and stop resending old Dockerfiles. But real agentic workflows need a higher-level control loop too:
+
+```text
+Mission → Artifact ledger → Bounded pass → Budget governor → Review feed → Approve / reduce / continue
+```
+
+This turns invisible prompt spend into accountable work units:
+
+- **Mission**: the delegated task and acceptance criteria.
+- **Artifact ledger**: durable context stored by hash instead of repeatedly pasted into mega-prompts.
+- **Pass manifest**: exactly which artifacts were included, with token/cost estimates.
+- **Budget governor**: blocks pass-level or mission-level overspend before provider calls.
+- **Review feed**: low-friction human approval cards for allowed and blocked work.
+
+The first local MVP dogfoods this loop before returning to high-throughput security research. See [`docs/MISSION_LEDGER_MVP.md`](docs/MISSION_LEDGER_MVP.md) and [`docs/MVP_REVIEW_FEED_DEMO.md`](docs/MVP_REVIEW_FEED_DEMO.md).
+
+> Honest status: the mission-ledger prototype is a local CLI in `prototypes/contextclaw_mvp.py`. The OpenClaw context-engine plugin remains separate and should not be re-enabled in production until the registration/compatibility issue is fixed.
+
 ## Live Dogfooding Results
 
 Running on our own OpenClaw instance (11,300 items across 6 real sessions):
