@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 export type MissionState = 'planned' | 'running' | 'waiting_approval' | 'paused' | 'complete' | 'failed' | 'killed';
 export type PassDecision = 'allowed' | 'blocked' | 'approved' | 'rejected';
@@ -68,10 +70,42 @@ export function estimateCost(tokensIn: number, tokensOut: number, ratePer1k = 0.
   return ((tokensIn + tokensOut) / 1000) * ratePer1k;
 }
 
+export interface MissionLedgerSnapshot {
+  missions: Mission[];
+  artifacts: Artifact[];
+  passes: PassPlan[];
+}
+
 export class MissionLedger {
   missions = new Map<string, Mission>();
   artifacts = new Map<string, Artifact>();
   passes = new Map<string, PassPlan>();
+
+  static fromSnapshot(snapshot: MissionLedgerSnapshot): MissionLedger {
+    const ledger = new MissionLedger();
+    for (const mission of snapshot.missions) ledger.missions.set(mission.id, mission);
+    for (const artifact of snapshot.artifacts) ledger.artifacts.set(artifact.id, artifact);
+    for (const pass of snapshot.passes) ledger.passes.set(pass.id, pass);
+    return ledger;
+  }
+
+  static load(path: string): MissionLedger {
+    const snapshot = JSON.parse(readFileSync(path, 'utf8')) as MissionLedgerSnapshot;
+    return MissionLedger.fromSnapshot(snapshot);
+  }
+
+  snapshot(): MissionLedgerSnapshot {
+    return {
+      missions: [...this.missions.values()],
+      artifacts: [...this.artifacts.values()],
+      passes: [...this.passes.values()],
+    };
+  }
+
+  save(path: string): void {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(this.snapshot(), null, 2)}\n`);
+  }
 
   createMission(input: { id: string; objective: string; budget: number; acceptanceCriteria?: string; sticker?: string }): Mission {
     const mission: Mission = {

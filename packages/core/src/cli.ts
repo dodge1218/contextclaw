@@ -240,6 +240,12 @@ async function main() {
         sticker: 'DEMO-BLOCK',
       });
 
+      const saveIdx = process.argv.indexOf('--save');
+      if (saveIdx !== -1 && saveIdx + 1 < process.argv.length) {
+        ledger.save(process.argv[saveIdx + 1]);
+        console.log(`Saved mission ledger snapshot to ${process.argv[saveIdx + 1]}`);
+      }
+
       console.log(ledger.explain(blocked.id));
       console.log('\n=== Review cards ===');
       console.log(JSON.stringify([ledger.reviewCard(blocked.id), ledger.reviewCard(allowed.id)], null, 2));

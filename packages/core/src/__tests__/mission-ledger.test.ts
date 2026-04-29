@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { MissionLedger } from '../mission-ledger.js';
 
@@ -23,6 +26,33 @@ describe('MissionLedger', () => {
 
     expect(pass.decision).toBe('allowed');
     expect(ledger.reviewCard(pass.id).nextAction).toMatch(/Ready/);
+  });
+
+  it('persists and reloads missions, artifacts, and passes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'contextclaw-ledger-'));
+    const path = join(dir, 'ledger.json');
+    try {
+      const ledger = new MissionLedger();
+      ledger.createMission({ id: 'mis_persist', objective: 'persist mission', budget: 0.05, sticker: 'PERSIST' });
+      ledger.addArtifact({ missionId: 'mis_persist', type: 'note', text: 'durable context', sticker: 'PERSIST' });
+      const pass = ledger.planPass({
+        missionId: 'mis_persist',
+        role: 'planner',
+        model: 'local/free',
+        artifactIds: 'all',
+        prompt: 'persist this pass',
+        estimatedTokensOut: 100,
+        maxSpend: 0.05,
+        sticker: 'PERSIST',
+      });
+      ledger.save(path);
+
+      const loaded = MissionLedger.load(path);
+      expect(loaded.reviewCard(pass.id).title).toBe('persist mission');
+      expect(loaded.explain(pass.id)).toContain('within budget');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('blocks over-budget passes and explains why', () => {
