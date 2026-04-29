@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/dodge1218/contextclaw/actions/workflows/ci.yml/badge.svg)](https://github.com/dodge1218/contextclaw/actions/workflows/ci.yml)
 
-**Stop sending Dockerfiles to your LLM 30 turns after you read them. Stop hitting 429 rate limits because your context is 3x bigger than it needs to be.**
+**Cost defense with memory for agentic work.** ContextClaw turns delegated AI work into missions, artifacts, bounded passes, budget decisions, and review cards so expensive model calls are visible before they happen.
 
-Context management plugin for [OpenClaw](https://github.com/openclaw/openclaw). Classifies every item in your context window by content type and applies retention policies. Files get truncated. Command output gets tailed. Your conversation stays intact. Your API bill stays low.
+ContextClaw started as a context management plugin for [OpenClaw](https://github.com/openclaw/openclaw): classify every item in your context window by content type, truncate stale files, tail command output, and keep API bills low. That compression layer still matters. The new direction is bigger: make every agent pass accountable instead of repeatedly resending giant mutable prompts.
 
 
 > **Part of the Token-Optimized Agentic Architecture.**
@@ -17,7 +17,17 @@ ContextClaw is no longer just a token trimmer. The current product direction is 
 The compression plugin remains Layer 1: classify context by content type, truncate stale tool output, and stop resending old Dockerfiles. But real agentic workflows need a higher-level control loop too:
 
 ```text
-Mission → Artifact ledger → Bounded pass → Budget governor → Review feed → Approve / reduce / continue
+┌────────────┐   ┌─────────────────┐   ┌──────────────┐
+│  Mission   │ → │ Artifact ledger │ → │ Bounded pass │
+└────────────┘   └─────────────────┘   └──────┬───────┘
+                                                ↓
+                                      ┌─────────────────┐
+                                      │ Budget governor │
+                                      └──────┬──────────┘
+                                             ↓
+                                      ┌─────────────┐
+                                      │ Review feed │ → approve / reduce / continue
+                                      └─────────────┘
 ```
 
 This turns invisible prompt spend into accountable work units:
