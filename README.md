@@ -28,7 +28,7 @@ This turns invisible prompt spend into accountable work units:
 - **Budget governor**: blocks pass-level or mission-level overspend before provider calls.
 - **Review feed**: low-friction human approval cards for allowed and blocked work.
 
-The first local MVP dogfoods this loop before returning to high-throughput security research. See [`docs/MISSION_LEDGER_MVP.md`](docs/MISSION_LEDGER_MVP.md) and [`docs/MVP_REVIEW_FEED_DEMO.md`](docs/MVP_REVIEW_FEED_DEMO.md).
+The first local MVP dogfoods this loop before returning to high-throughput security research. See [`docs/MISSION_LEDGER_MVP.md`](docs/MISSION_LEDGER_MVP.md), [`docs/PREDICTABLE_SPEND_MODEL.md`](docs/PREDICTABLE_SPEND_MODEL.md), and [`docs/MVP_REVIEW_FEED_DEMO.md`](docs/MVP_REVIEW_FEED_DEMO.md).
 
 Try the local prototype:
 
@@ -194,6 +194,7 @@ They're complementary. Caching reduces cost on the static prefix. ContextClaw re
 - [x] Review-feed demo cards (`docs/MVP_REVIEW_FEED_DEMO.md`)
 - [x] Content-addressable artifact dedup in the MVP ledger
 - [x] Minimal TypeScript `MissionLedger` core scaffold + tests
+- [ ] Add Copilot-style premium unit budgets for predictable spend with unknown context
 - [ ] Port persisted mission ledger/governor from prototype into the TypeScript core
 - [ ] Fix OpenClaw context-engine registration compatibility before re-enabling plugin dogfood
 - [ ] Auto-rehydration from cold storage
