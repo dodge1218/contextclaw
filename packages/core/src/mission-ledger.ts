@@ -261,6 +261,25 @@ export class MissionLedger {
     return pass;
   }
 
+  revisePass(passId: string, input: { prompt: string; estimatedTokensOut: number; maxSpend: number; model?: string; role?: string; sticker?: string }): PassPlan {
+    const source = this.mustPass(passId);
+    const mission = this.mustMission(source.missionId);
+    const revised = this.planPass({
+      missionId: source.missionId,
+      role: input.role ?? source.role,
+      model: input.model ?? source.model,
+      artifactIds: source.artifactIds,
+      prompt: input.prompt,
+      estimatedTokensOut: input.estimatedTokensOut,
+      maxSpend: input.maxSpend,
+      sticker: input.sticker ?? source.sticker,
+    });
+    if (source.decision === 'blocked' || source.decision === 'rejected') {
+      mission.state = revised.decision === 'blocked' ? 'waiting_approval' : 'running';
+    }
+    return revised;
+  }
+
   renderReviewCard(passId: string): string {
     const card = this.reviewCard(passId);
     return [

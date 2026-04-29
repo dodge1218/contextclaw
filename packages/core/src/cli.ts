@@ -29,6 +29,7 @@ Commands:
   mission-why --load <file>     Explain the latest blocked pass in a saved ledger
   mission-approve --load <file> Approve a blocked pass in a saved ledger
   mission-reject --load <file>  Reject a pass and pause its mission
+  mission-revise --load <file>  Create a smaller follow-up pass from an existing pass
   clear                         Clear the current session
   chat                          Start interactive chat (default)
   help                          Show this help
@@ -64,6 +65,7 @@ Examples:
   cc mission-why --load /tmp/ledger.json
   cc mission-approve --load /tmp/ledger.json --pass <id> --increase-budget 0.25
   cc mission-reject --load /tmp/ledger.json --pass <id> --reason "too broad"
+  cc mission-revise --load /tmp/ledger.json --pass <id> --prompt "smaller pass" --output-tokens 500 --max-spend 0.01
 `);
 }
 
@@ -305,6 +307,30 @@ async function main() {
       ledger.save(path);
       console.log(`Rejected ${rejected.id}. Updated ledger saved to ${path}.`);
       console.log(ledger.renderReviewCard(rejected.id));
+      break;
+    }
+
+    case 'mission-revise': {
+      const path = requireStringFlag('--load');
+      const ledger = MissionLedger.load(path);
+      const passId = requireStringFlag('--pass');
+      const prompt = requireStringFlag('--prompt');
+      const estimatedTokensOut = parseFlag('--output-tokens', 500);
+      const maxSpend = Number(parseStringFlag('--max-spend', '0.01')) || 0.01;
+      const model = parseStringFlag('--model', '');
+      const role = parseStringFlag('--role', '');
+      const sticker = parseStringFlag('--sticker', '');
+      const revised = ledger.revisePass(passId, {
+        prompt,
+        estimatedTokensOut,
+        maxSpend,
+        model: model || undefined,
+        role: role || undefined,
+        sticker: sticker || undefined,
+      });
+      ledger.save(path);
+      console.log(`Created revised pass ${revised.id}. Updated ledger saved to ${path}.`);
+      console.log(ledger.renderReviewCard(revised.id));
       break;
     }
 
