@@ -33,6 +33,13 @@ The first local MVP dogfoods this loop before returning to high-throughput secur
 Try the local prototype:
 
 ```bash
+npm run mvp:help
+npm run demo:mission-ledger
+```
+
+Or without npm:
+
+```bash
 python3 prototypes/contextclaw_mvp.py --help
 bash prototypes/demo_mission_ledger.sh
 ```
@@ -119,9 +126,12 @@ npx cc analyze
 
 ```bash
 cd ~/.openclaw/workspace/contextclaw/plugin && npm install
-# Enable in openclaw.json → plugins.slots.contextEngine: "contextclaw"
+# Enable only after verifying your OpenClaw version supports the context-engine plugin registration path.
+# Historical config shape: plugins.slots.contextEngine: "contextclaw"
 ```
 
+> **Current safety note:** keep the plugin disabled in critical workspaces until the context-engine registration compatibility issue is fixed. The mission-ledger CLI is safe to run standalone because it does not hook provider execution.
+>
 > **v1 is an OpenClaw plugin.** Standalone adapters for LangChain, Cline, etc. are on the roadmap. The classification and policy engine in `packages/core/` is framework-agnostic TypeScript.
 
 ## Project Structure
@@ -168,10 +178,14 @@ They're complementary. Caching reduces cost on the static prefix. ContextClaw re
 - [x] Live dogfooding with telemetry
 - [x] Cold storage for evicted content
 - [x] npm publish (`contextclaw` on npm) ✅ v1.0.1
+- [x] Local mission-ledger prototype (`prototypes/contextclaw_mvp.py`)
+- [x] Review-feed demo cards (`docs/MVP_REVIEW_FEED_DEMO.md`)
+- [x] Content-addressable artifact dedup in the MVP ledger
+- [ ] Port mission ledger/governor from prototype into the TypeScript core
+- [ ] Fix OpenClaw context-engine registration compatibility before re-enabling plugin dogfood
 - [ ] Auto-rehydration from cold storage
 - [ ] Sticker system — task-scoped context retrieval (v2)
-- [ ] Content-addressable dedup (hash-based, same file = store once)
-- [ ] Studio dashboard (real-time token visualization)
+- [ ] Studio dashboard (real-time token visualization + review feed)
 - [ ] Multi-agent shared context protocol ([RFC](docs/MULTI_AGENT_PROTOCOL.md))
 
 ### 🤝 Wanted: Framework Adapter Maintainers
