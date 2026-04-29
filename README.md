@@ -30,6 +30,15 @@ This turns invisible prompt spend into accountable work units:
 
 The first local MVP dogfoods this loop before returning to high-throughput security research. See [`docs/MISSION_LEDGER_MVP.md`](docs/MISSION_LEDGER_MVP.md) and [`docs/MVP_REVIEW_FEED_DEMO.md`](docs/MVP_REVIEW_FEED_DEMO.md).
 
+Try the local prototype:
+
+```bash
+python3 prototypes/contextclaw_mvp.py --help
+bash prototypes/demo_mission_ledger.sh
+```
+
+The demo creates a temporary mission, ingests docs as artifacts, allows one bounded pass, blocks one oversized pass, explains why it blocked, and prints a review-feed card.
+
 > Honest status: the mission-ledger prototype is a local CLI in `prototypes/contextclaw_mvp.py`. The OpenClaw context-engine plugin remains separate and should not be re-enabled in production until the registration/compatibility issue is fixed.
 
 ## Live Dogfooding Results

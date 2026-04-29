@@ -51,6 +51,14 @@ python3 prototypes/contextclaw_mvp.py why-blocked mis_contextclaw_mvp
 python3 prototypes/contextclaw_mvp.py review-feed mis_contextclaw_mvp
 ```
 
+For a clean end-to-end demo that does not touch your local ledger:
+
+```bash
+bash prototypes/demo_mission_ledger.sh
+```
+
+The demo stores its SQLite DB and artifacts in `/tmp` unless `CONTEXTCLAW_DB` / `CONTEXTCLAW_STORE` are set.
+
 See [`MVP_REVIEW_FEED_DEMO.md`](MVP_REVIEW_FEED_DEMO.md) for the first dogfood review-feed output.
 
 ## Why this matters
