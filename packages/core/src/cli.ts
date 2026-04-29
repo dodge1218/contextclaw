@@ -225,6 +225,8 @@ async function main() {
         budget: 0.05,
         sticker: 'DEMO',
         acceptanceCriteria: 'Show one allowed pass, one blocked pass, and a review-feed card',
+        premiumUnitBudget: 3,
+        unitCostBasis: 'fixed-prompt',
       });
       ledger.addArtifact({
         missionId: mission.id,
@@ -248,6 +250,8 @@ async function main() {
         prompt: 'Plan a small README update from these artifacts.',
         estimatedTokensOut: 500,
         maxSpend: 0.05,
+        maxPremiumUnits: 1,
+        unitCostBasis: 'fixed-prompt',
         sticker: 'DEMO',
       });
       const blocked = ledger.planPass({
@@ -258,6 +262,9 @@ async function main() {
         prompt: 'Oversized pass that should be blocked.',
         estimatedTokensOut: 100_000,
         maxSpend: 0.001,
+        maxPremiumUnits: 0.3,
+        unitCostBasis: 'fixed-prompt',
+        fixedUnitsPerPrompt: 1,
         sticker: 'DEMO-BLOCK',
       });
 

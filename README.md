@@ -194,7 +194,7 @@ They're complementary. Caching reduces cost on the static prefix. ContextClaw re
 - [x] Review-feed demo cards (`docs/MVP_REVIEW_FEED_DEMO.md`)
 - [x] Content-addressable artifact dedup in the MVP ledger
 - [x] Minimal TypeScript `MissionLedger` core scaffold + tests
-- [ ] Add Copilot-style premium unit budgets for predictable spend with unknown context
+- [x] Copilot-style premium unit estimates for predictable spend with unknown context
 - [ ] Port persisted mission ledger/governor from prototype into the TypeScript core
 - [ ] Fix OpenClaw context-engine registration compatibility before re-enabling plugin dogfood
 - [ ] Auto-rehydration from cold storage

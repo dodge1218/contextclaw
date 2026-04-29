@@ -126,6 +126,29 @@ describe('MissionLedger', () => {
     expect(ledger.reviewCard(revised.id).nextAction).toMatch(/Ready/);
   });
 
+  it('blocks passes over premium-unit budgets', () => {
+    const ledger = new MissionLedger();
+    ledger.createMission({ id: 'mis_units', objective: 'unit mission', budget: 1, premiumUnitBudget: 0.5, unitCostBasis: 'fixed-prompt', sticker: 'UNIT' });
+    ledger.addArtifact({ missionId: 'mis_units', type: 'note', text: 'tiny', sticker: 'UNIT' });
+
+    const pass = ledger.planPass({
+      missionId: 'mis_units',
+      role: 'planner',
+      model: 'premium/frontier',
+      artifactIds: 'all',
+      prompt: 'fixed unit pass',
+      estimatedTokensOut: 10,
+      maxSpend: 1,
+      maxPremiumUnits: 0.3,
+      unitCostBasis: 'fixed-prompt',
+      sticker: 'UNIT',
+    });
+
+    expect(pass.decision).toBe('blocked');
+    expect(pass.reason).toBe('mission premium-unit budget exceeded');
+    expect(ledger.renderReviewCard(pass.id)).toContain('Premium units');
+  });
+
   it('blocks over-budget passes and explains why', () => {
     const ledger = new MissionLedger();
     ledger.createMission({ id: 'mis_demo', objective: 'demo mission', budget: 0.01, sticker: 'DEMO' });

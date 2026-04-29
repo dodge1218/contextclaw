@@ -5,6 +5,8 @@ import { dirname } from 'node:path';
 export type MissionState = 'planned' | 'running' | 'waiting_approval' | 'paused' | 'complete' | 'failed' | 'killed';
 export type PassDecision = 'allowed' | 'blocked' | 'approved' | 'rejected';
 
+export type UnitCostBasis = 'fixed-prompt' | 'token-estimate' | 'provider-receipt';
+
 export interface Mission {
   id: string;
   objective: string;
@@ -13,6 +15,9 @@ export interface Mission {
   state: MissionState;
   acceptanceCriteria?: string;
   sticker?: string;
+  premiumUnitBudget?: number;
+  premiumUnitsRemaining?: number;
+  unitCostBasis?: UnitCostBasis;
 }
 
 export interface Artifact {
@@ -37,6 +42,9 @@ export interface PassPlan {
   estimatedTokensOut: number;
   estimatedCost: number;
   maxSpend: number;
+  estimatedPremiumUnits?: number;
+  maxPremiumUnits?: number;
+  unitCostBasis?: UnitCostBasis;
   decision: PassDecision;
   reason?: string;
   sticker?: string;
@@ -53,7 +61,7 @@ export interface PassManifest {
 export interface ReviewCard {
   title: string;
   mission: Pick<Mission, 'id' | 'state' | 'sticker' | 'budgetRemaining'>;
-  pass: Pick<PassPlan, 'id' | 'role' | 'model' | 'decision' | 'estimatedCost' | 'maxSpend' | 'estimatedTokensIn' | 'estimatedTokensOut' | 'reason'>;
+  pass: Pick<PassPlan, 'id' | 'role' | 'model' | 'decision' | 'estimatedCost' | 'maxSpend' | 'estimatedTokensIn' | 'estimatedTokensOut' | 'estimatedPremiumUnits' | 'maxPremiumUnits' | 'unitCostBasis' | 'reason'>;
   nextAction: string;
   artifacts: PassManifest['artifacts'];
 }
@@ -68,6 +76,12 @@ export function estimateTokens(text: string): number {
 
 export function estimateCost(tokensIn: number, tokensOut: number, ratePer1k = 0.002): number {
   return ((tokensIn + tokensOut) / 1000) * ratePer1k;
+}
+
+export function estimatePremiumUnits(tokensIn: number, tokensOut: number, options: { basis?: UnitCostBasis; fixedUnitsPerPrompt?: number; tokensPerUnit?: number } = {}): number {
+  const basis = options.basis ?? 'token-estimate';
+  if (basis === 'fixed-prompt') return options.fixedUnitsPerPrompt ?? 1;
+  return (tokensIn + tokensOut) / (options.tokensPerUnit ?? 100_000);
 }
 
 export interface MissionLedgerSnapshot {
@@ -107,7 +121,7 @@ export class MissionLedger {
     writeFileSync(path, `${JSON.stringify(this.snapshot(), null, 2)}\n`);
   }
 
-  createMission(input: { id: string; objective: string; budget: number; acceptanceCriteria?: string; sticker?: string }): Mission {
+  createMission(input: { id: string; objective: string; budget: number; acceptanceCriteria?: string; sticker?: string; premiumUnitBudget?: number; unitCostBasis?: UnitCostBasis }): Mission {
     const mission: Mission = {
       id: input.id,
       objective: input.objective,
@@ -116,6 +130,9 @@ export class MissionLedger {
       state: 'planned',
       acceptanceCriteria: input.acceptanceCriteria,
       sticker: input.sticker,
+      premiumUnitBudget: input.premiumUnitBudget,
+      premiumUnitsRemaining: input.premiumUnitBudget,
+      unitCostBasis: input.unitCostBasis,
     };
     this.missions.set(mission.id, mission);
     return mission;
@@ -141,7 +158,7 @@ export class MissionLedger {
     return artifact;
   }
 
-  planPass(input: { missionId: string; role: string; model: string; artifactIds: string[] | 'all'; prompt: string; estimatedTokensOut: number; maxSpend: number; sticker?: string; ratePer1k?: number }): PassPlan {
+  planPass(input: { missionId: string; role: string; model: string; artifactIds: string[] | 'all'; prompt: string; estimatedTokensOut: number; maxSpend: number; sticker?: string; ratePer1k?: number; maxPremiumUnits?: number; unitCostBasis?: UnitCostBasis; fixedUnitsPerPrompt?: number; tokensPerUnit?: number }): PassPlan {
     const mission = this.mustMission(input.missionId);
     const artifacts = input.artifactIds === 'all'
       ? [...this.artifacts.values()].filter((artifact) => artifact.missionId === input.missionId)
@@ -153,6 +170,12 @@ export class MissionLedger {
     const assembled = selected.map((artifact) => `# Artifact ${artifact.id} (${artifact.type}, sticker=${artifact.sticker ?? 'none'})\nSummary: ${artifact.summary}\n\n${artifact.text}`).join('\n\n');
     const estimatedTokensIn = estimateTokens(assembled) + estimateTokens(input.prompt);
     const estimatedCost = estimateCost(estimatedTokensIn, input.estimatedTokensOut, input.ratePer1k);
+    const unitCostBasis = input.unitCostBasis ?? mission.unitCostBasis ?? 'token-estimate';
+    const estimatedPremiumUnits = estimatePremiumUnits(estimatedTokensIn, input.estimatedTokensOut, {
+      basis: unitCostBasis,
+      fixedUnitsPerPrompt: input.fixedUnitsPerPrompt,
+      tokensPerUnit: input.tokensPerUnit,
+    });
 
     let decision: PassDecision = 'allowed';
     let reason: string | undefined;
@@ -163,6 +186,14 @@ export class MissionLedger {
     if (estimatedCost > mission.budgetRemaining) {
       decision = 'blocked';
       reason = 'mission budget exceeded';
+    }
+    if (input.maxPremiumUnits !== undefined && estimatedPremiumUnits > input.maxPremiumUnits) {
+      decision = 'blocked';
+      reason = 'pass premium-unit budget exceeded';
+    }
+    if (mission.premiumUnitsRemaining !== undefined && estimatedPremiumUnits > mission.premiumUnitsRemaining) {
+      decision = 'blocked';
+      reason = 'mission premium-unit budget exceeded';
     }
 
     const pass: PassPlan = {
@@ -176,6 +207,9 @@ export class MissionLedger {
       estimatedTokensOut: input.estimatedTokensOut,
       estimatedCost,
       maxSpend: input.maxSpend,
+      estimatedPremiumUnits,
+      maxPremiumUnits: input.maxPremiumUnits,
+      unitCostBasis,
       decision,
       reason,
       sticker: input.sticker,
@@ -190,6 +224,7 @@ export class MissionLedger {
     this.passes.set(pass.id, pass);
     if (decision === 'allowed') {
       mission.budgetRemaining -= estimatedCost;
+      if (mission.premiumUnitsRemaining !== undefined) mission.premiumUnitsRemaining -= estimatedPremiumUnits;
       mission.state = 'running';
     } else {
       mission.state = 'waiting_approval';
@@ -221,6 +256,9 @@ export class MissionLedger {
         maxSpend: pass.maxSpend,
         estimatedTokensIn: pass.estimatedTokensIn,
         estimatedTokensOut: pass.estimatedTokensOut,
+        estimatedPremiumUnits: pass.estimatedPremiumUnits,
+        maxPremiumUnits: pass.maxPremiumUnits,
+        unitCostBasis: pass.unitCostBasis,
         reason: pass.reason,
       },
       artifacts: pass.manifest.artifacts,
@@ -244,7 +282,11 @@ export class MissionLedger {
     if (pass.estimatedCost > mission.budgetRemaining) {
       throw new Error(`Approval needs more budget: estimated $${pass.estimatedCost.toFixed(6)}, remaining $${mission.budgetRemaining.toFixed(6)}`);
     }
+    if (pass.estimatedPremiumUnits !== undefined && mission.premiumUnitsRemaining !== undefined && pass.estimatedPremiumUnits > mission.premiumUnitsRemaining) {
+      throw new Error(`Approval needs more premium units: estimated ${pass.estimatedPremiumUnits.toFixed(3)}, remaining ${mission.premiumUnitsRemaining.toFixed(3)}`);
+    }
     mission.budgetRemaining -= pass.estimatedCost;
+    if (pass.estimatedPremiumUnits !== undefined && mission.premiumUnitsRemaining !== undefined) mission.premiumUnitsRemaining -= pass.estimatedPremiumUnits;
     mission.state = 'running';
     pass.decision = 'approved';
     pass.reason = 'manual approve once';
@@ -287,6 +329,7 @@ export class MissionLedger {
       `Mission: \`${card.mission.id}\` | Sticker: \`${card.mission.sticker ?? 'none'}\` | State: **${card.mission.state}**`,
       `Pass: \`${card.pass.id}\` | Role: \`${card.pass.role}\` | Model: \`${card.pass.model}\` | Decision: **${card.pass.decision}**`,
       `Spend: estimated \`$${card.pass.estimatedCost.toFixed(6)}\` | pass max \`$${card.pass.maxSpend.toFixed(6)}\` | mission remaining \`$${card.mission.budgetRemaining.toFixed(6)}\``,
+      ...(card.pass.estimatedPremiumUnits !== undefined ? [`Premium units: estimated \`${card.pass.estimatedPremiumUnits.toFixed(3)}\`${card.pass.maxPremiumUnits !== undefined ? ` | pass max \`${card.pass.maxPremiumUnits.toFixed(3)}\`` : ''}${card.pass.unitCostBasis ? ` | basis \`${card.pass.unitCostBasis}\`` : ''}`] : []),
       `Tokens: ${card.pass.estimatedTokensIn} in / ${card.pass.estimatedTokensOut} out`,
       `Reason: ${card.pass.reason ?? 'within budget'}`,
       '',
