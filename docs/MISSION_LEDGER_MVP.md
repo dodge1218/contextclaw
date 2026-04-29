@@ -59,6 +59,15 @@ bash prototypes/demo_mission_ledger.sh
 
 The demo stores its SQLite DB and artifacts in `/tmp` unless `CONTEXTCLAW_DB` / `CONTEXTCLAW_STORE` are set.
 
+The TypeScript core can also save and inspect JSON snapshots:
+
+```bash
+npm run build
+node packages/core/dist/cli.js mission-demo --save /tmp/contextclaw-ledger-demo.json
+node packages/core/dist/cli.js mission-review --load /tmp/contextclaw-ledger-demo.json
+node packages/core/dist/cli.js mission-why --load /tmp/contextclaw-ledger-demo.json
+```
+
 See [`MVP_REVIEW_FEED_DEMO.md`](MVP_REVIEW_FEED_DEMO.md) for the first dogfood review-feed output.
 
 ## Why this matters

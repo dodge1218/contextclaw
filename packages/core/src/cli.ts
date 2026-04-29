@@ -25,6 +25,8 @@ Commands:
   eval [--verbose]              Run quality eval (proves compression doesn't degrade output)
   inspect                       Start inspector web UI on port 3333
   mission-demo                  Demo mission ledger budget gate + review feed
+  mission-review --load <file>  Print review cards from a saved mission ledger
+  mission-why --load <file>     Explain the latest blocked pass in a saved ledger
   clear                         Clear the current session
   chat                          Start interactive chat (default)
   help                          Show this help
@@ -54,6 +56,9 @@ Examples:
   cc eval                    Run quality eval with defaults
   cc eval --verbose          Eval with per-task breakdown
   cc mission-demo            Show mission ledger pass governance
+  cc mission-demo --save /tmp/ledger.json
+  cc mission-review --load /tmp/ledger.json
+  cc mission-why --load /tmp/ledger.json
 `);
 }
 
@@ -67,6 +72,15 @@ function parseStringFlag(flag: string, defaultVal: string): string {
   const idx = process.argv.indexOf(flag);
   if (idx === -1 || idx + 1 >= process.argv.length) return defaultVal;
   return process.argv[idx + 1] || defaultVal;
+}
+
+function requireStringFlag(flag: string): string {
+  const value = parseStringFlag(flag, '');
+  if (!value) {
+    console.error(`Missing required ${flag} <path>`);
+    process.exit(1);
+  }
+  return value;
 }
 
 async function main() {
@@ -249,6 +263,28 @@ async function main() {
       console.log(ledger.explain(blocked.id));
       console.log('\n=== Review cards ===');
       console.log(JSON.stringify([ledger.reviewCard(blocked.id), ledger.reviewCard(allowed.id)], null, 2));
+      break;
+    }
+
+    case 'mission-review': {
+      const ledger = MissionLedger.load(requireStringFlag('--load'));
+      const limit = parseFlag('--limit', 10);
+      const passes = [...ledger.passes.values()].slice(-limit).reverse();
+      console.log(JSON.stringify(passes.map((pass) => ledger.reviewCard(pass.id)), null, 2));
+      break;
+    }
+
+    case 'mission-why': {
+      const ledger = MissionLedger.load(requireStringFlag('--load'));
+      const passId = parseStringFlag('--pass', '');
+      const pass = passId
+        ? ledger.passes.get(passId)
+        : [...ledger.passes.values()].reverse().find((candidate) => candidate.decision === 'blocked') ?? [...ledger.passes.values()].at(-1);
+      if (!pass) {
+        console.error('No pass found in ledger.');
+        process.exit(1);
+      }
+      console.log(ledger.explain(pass.id));
       break;
     }
 
