@@ -35,6 +35,7 @@ Try the local prototype:
 ```bash
 npm run mvp:help
 npm run demo:mission-ledger
+npm run demo:mission-ledger:ts
 ```
 
 Or without npm:
@@ -44,7 +45,7 @@ python3 prototypes/contextclaw_mvp.py --help
 bash prototypes/demo_mission_ledger.sh
 ```
 
-The demo creates a temporary mission, ingests docs as artifacts, allows one bounded pass, blocks one oversized pass, explains why it blocked, and prints a review-feed card.
+The Python demo creates a temporary mission, ingests docs as artifacts, allows one bounded pass, blocks one oversized pass, explains why it blocked, and prints a review-feed card. The TypeScript demo exercises the exported `MissionLedger` core scaffold directly.
 
 > Honest status: the mission-ledger prototype is a local CLI in `prototypes/contextclaw_mvp.py`. The OpenClaw context-engine plugin remains separate and should not be re-enabled in production until the registration/compatibility issue is fixed.
 

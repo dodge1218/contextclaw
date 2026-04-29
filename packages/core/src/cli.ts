@@ -7,6 +7,7 @@ import { ContextClaw } from './orchestrator.js';
 import { analyzeSession } from './analyzer.js';
 import { SessionWatcher } from './watcher.js';
 import { isUsingHeuristic } from './budget.js';
+import { MissionLedger } from './mission-ledger.js';
 
 const DEFAULT_WS_URL = 'ws://127.0.0.1:18789';
 
@@ -23,6 +24,7 @@ Commands:
   status                        Quick snapshot of current session health
   eval [--verbose]              Run quality eval (proves compression doesn't degrade output)
   inspect                       Start inspector web UI on port 3333
+  mission-demo                  Demo mission ledger budget gate + review feed
   clear                         Clear the current session
   chat                          Start interactive chat (default)
   help                          Show this help
@@ -51,6 +53,7 @@ Examples:
   cc status                  Quick health check
   cc eval                    Run quality eval with defaults
   cc eval --verbose          Eval with per-task breakdown
+  cc mission-demo            Show mission ledger pass governance
 `);
 }
 
@@ -190,6 +193,56 @@ async function main() {
         judgeApiKey,
         verbose: process.argv.includes('--verbose'),
       });
+      break;
+    }
+
+    case 'mission-demo': {
+      const ledger = new MissionLedger();
+      const mission = ledger.createMission({
+        id: 'mis_demo_review_feed',
+        objective: 'Demo: review-feed governed agent work',
+        budget: 0.05,
+        sticker: 'DEMO',
+        acceptanceCriteria: 'Show one allowed pass, one blocked pass, and a review-feed card',
+      });
+      ledger.addArtifact({
+        missionId: mission.id,
+        type: 'product-plan',
+        text: 'Mission ledger MVP: mission, artifact ledger, bounded pass, budget governor, review feed.',
+        summary: 'Mission ledger MVP architecture and rationale',
+        sticker: 'DEMO',
+      });
+      ledger.addArtifact({
+        missionId: mission.id,
+        type: 'readme',
+        text: 'ContextClaw README: cost defense with memory for agentic work.',
+        summary: 'Current public ContextClaw README positioning',
+        sticker: 'DEMO',
+      });
+      const allowed = ledger.planPass({
+        missionId: mission.id,
+        role: 'planner',
+        model: 'local/free',
+        artifactIds: 'all',
+        prompt: 'Plan a small README update from these artifacts.',
+        estimatedTokensOut: 500,
+        maxSpend: 0.05,
+        sticker: 'DEMO',
+      });
+      const blocked = ledger.planPass({
+        missionId: mission.id,
+        role: 'planner',
+        model: 'premium/frontier',
+        artifactIds: 'all',
+        prompt: 'Oversized pass that should be blocked.',
+        estimatedTokensOut: 100_000,
+        maxSpend: 0.001,
+        sticker: 'DEMO-BLOCK',
+      });
+
+      console.log(ledger.explain(blocked.id));
+      console.log('\n=== Review cards ===');
+      console.log(JSON.stringify([ledger.reviewCard(blocked.id), ledger.reviewCard(allowed.id)], null, 2));
       break;
     }
 
