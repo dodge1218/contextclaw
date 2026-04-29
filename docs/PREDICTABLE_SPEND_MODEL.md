@@ -107,12 +107,13 @@ That requires:
 5. Actual/estimated usage receipts after execution.
 6. Cache-aware accounting when provider data exists.
 
-## Next implementation target
+## Implemented in the TypeScript scaffold
 
-Add a quota-unit layer to `MissionLedger`:
+The TypeScript `MissionLedger` now has a quota-unit layer:
 
 ```ts
 premiumUnitBudget: number
+premiumUnitsRemaining: number
 estimatedPremiumUnits: number
 unitCostBasis: 'fixed-prompt' | 'token-estimate' | 'provider-receipt'
 ```
@@ -123,3 +124,19 @@ This lets ContextClaw express both pricing modes:
 - Copilot-style mode: predictable prompt units.
 
 The abstraction is the point. Users should be able to budget a mission in dollars, tokens, or premium units, then see every pass consume that budget before the call happens.
+
+## Next implementation target
+
+The next hard part is replacing estimates with receipts where providers expose them:
+
+```ts
+actualTokensIn?: number
+actualTokensOut?: number
+actualCostUsd?: number
+actualPremiumUnits?: number
+cacheReadTokens?: number
+cacheWriteTokens?: number
+receiptSource: 'provider' | 'gateway' | 'manual' | 'estimate-only'
+```
+
+That is the bridge from "preflight budget governor" to "auditable spend ledger." Until actual receipts exist, premium units remain an estimate/control abstraction, not proof of provider billing.
