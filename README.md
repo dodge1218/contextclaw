@@ -181,7 +181,8 @@ They're complementary. Caching reduces cost on the static prefix. ContextClaw re
 - [x] Local mission-ledger prototype (`prototypes/contextclaw_mvp.py`)
 - [x] Review-feed demo cards (`docs/MVP_REVIEW_FEED_DEMO.md`)
 - [x] Content-addressable artifact dedup in the MVP ledger
-- [ ] Port mission ledger/governor from prototype into the TypeScript core
+- [x] Minimal TypeScript `MissionLedger` core scaffold + tests
+- [ ] Port persisted mission ledger/governor from prototype into the TypeScript core
 - [ ] Fix OpenClaw context-engine registration compatibility before re-enabling plugin dogfood
 - [ ] Auto-rehydration from cold storage
 - [ ] Sticker system — task-scoped context retrieval (v2)
