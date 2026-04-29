@@ -56,6 +56,8 @@ node packages/core/dist/cli.js mission-why --load /tmp/contextclaw-ledger-demo.j
 node packages/core/dist/cli.js mission-approve --load /tmp/contextclaw-ledger-demo.json --pass <blocked-pass-id> --increase-budget 0.25
 node packages/core/dist/cli.js mission-reject --load /tmp/contextclaw-ledger-demo.json --pass <pass-id> --reason "too broad"
 node packages/core/dist/cli.js mission-revise --load /tmp/contextclaw-ledger-demo.json --pass <pass-id> --prompt "smaller pass" --output-tokens 500 --max-spend 0.01
+node packages/core/dist/cli.js mission-receipt --load /tmp/contextclaw-ledger-demo.json --pass <pass-id> --actual-cost 0.014 --tokens-in 12000 --tokens-out 800 --cache-read 9000
+node packages/core/dist/cli.js mission-variance --load /tmp/contextclaw-ledger-demo.json --pass <pass-id>
 ```
 
 > Honest status: the mission-ledger prototype is a local CLI in `prototypes/contextclaw_mvp.py`. The OpenClaw context-engine plugin remains separate and should not be re-enabled in production until the registration/compatibility issue is fixed.
@@ -195,6 +197,8 @@ They're complementary. Caching reduces cost on the static prefix. ContextClaw re
 - [x] Content-addressable artifact dedup in the MVP ledger
 - [x] Minimal TypeScript `MissionLedger` core scaffold + tests
 - [x] Copilot-style premium unit estimates for predictable spend with unknown context
+- [x] Manual usage receipts + estimate-vs-actual variance in TypeScript ledger
+- [ ] Wire provider/gateway receipts into the ledger automatically
 - [ ] Port persisted mission ledger/governor from prototype into the TypeScript core
 - [ ] Fix OpenClaw context-engine registration compatibility before re-enabling plugin dogfood
 - [ ] Auto-rehydration from cold storage

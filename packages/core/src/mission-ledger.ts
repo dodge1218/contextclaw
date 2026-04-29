@@ -31,6 +31,33 @@ export interface Artifact {
   sticker?: string;
 }
 
+export type ReceiptSource = 'provider' | 'gateway' | 'manual' | 'estimate-only';
+
+export interface UsageReceipt {
+  actualTokensIn?: number;
+  actualTokensOut?: number;
+  actualCostUsd?: number;
+  actualPremiumUnits?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  receiptSource?: ReceiptSource;
+  receiptRaw?: unknown;
+}
+
+export interface UsageVariance {
+  estimatedCost: number;
+  actualCostUsd?: number;
+  costDeltaUsd?: number;
+  costRatio?: number;
+  estimatedTokensTotal: number;
+  actualTokensTotal?: number;
+  tokenDelta?: number;
+  estimatedPremiumUnits?: number;
+  actualPremiumUnits?: number;
+  premiumUnitDelta?: number;
+  warning?: string;
+}
+
 export interface PassPlan {
   id: string;
   missionId: string;
@@ -45,6 +72,7 @@ export interface PassPlan {
   estimatedPremiumUnits?: number;
   maxPremiumUnits?: number;
   unitCostBasis?: UnitCostBasis;
+  receipt?: UsageReceipt;
   decision: PassDecision;
   reason?: string;
   sticker?: string;
@@ -61,7 +89,8 @@ export interface PassManifest {
 export interface ReviewCard {
   title: string;
   mission: Pick<Mission, 'id' | 'state' | 'sticker' | 'budgetRemaining'>;
-  pass: Pick<PassPlan, 'id' | 'role' | 'model' | 'decision' | 'estimatedCost' | 'maxSpend' | 'estimatedTokensIn' | 'estimatedTokensOut' | 'estimatedPremiumUnits' | 'maxPremiumUnits' | 'unitCostBasis' | 'reason'>;
+  pass: Pick<PassPlan, 'id' | 'role' | 'model' | 'decision' | 'estimatedCost' | 'maxSpend' | 'estimatedTokensIn' | 'estimatedTokensOut' | 'estimatedPremiumUnits' | 'maxPremiumUnits' | 'unitCostBasis' | 'receipt' | 'reason'>;
+  variance?: UsageVariance;
   nextAction: string;
   artifacts: PassManifest['artifacts'];
 }
@@ -241,6 +270,42 @@ export class MissionLedger {
     return `Pass ${pass.id} ${pass.decision}. Estimated spend $${pass.estimatedCost.toFixed(6)} was within budget for mission ${mission.id}.`;
   }
 
+  recordReceipt(passId: string, receipt: UsageReceipt): PassPlan {
+    const pass = this.mustPass(passId);
+    pass.receipt = { receiptSource: 'manual', ...receipt };
+    return pass;
+  }
+
+  variance(passId: string): UsageVariance {
+    const pass = this.mustPass(passId);
+    const receipt = pass.receipt;
+    const estimatedTokensTotal = pass.estimatedTokensIn + pass.estimatedTokensOut;
+    const actualTokensTotal = receipt?.actualTokensIn !== undefined || receipt?.actualTokensOut !== undefined
+      ? (receipt.actualTokensIn ?? 0) + (receipt.actualTokensOut ?? 0)
+      : undefined;
+    const costDeltaUsd = receipt?.actualCostUsd !== undefined ? receipt.actualCostUsd - pass.estimatedCost : undefined;
+    const costRatio = receipt?.actualCostUsd !== undefined && pass.estimatedCost > 0 ? receipt.actualCostUsd / pass.estimatedCost : undefined;
+    const premiumUnitDelta = receipt?.actualPremiumUnits !== undefined && pass.estimatedPremiumUnits !== undefined ? receipt.actualPremiumUnits - pass.estimatedPremiumUnits : undefined;
+    const warning = costRatio !== undefined && costRatio > 1.25
+      ? `actual cost ${(costRatio * 100).toFixed(0)}% of estimate`
+      : premiumUnitDelta !== undefined && premiumUnitDelta > 0.25
+        ? `actual premium units exceeded estimate by ${premiumUnitDelta.toFixed(3)}`
+        : undefined;
+    return {
+      estimatedCost: pass.estimatedCost,
+      actualCostUsd: receipt?.actualCostUsd,
+      costDeltaUsd,
+      costRatio,
+      estimatedTokensTotal,
+      actualTokensTotal,
+      tokenDelta: actualTokensTotal !== undefined ? actualTokensTotal - estimatedTokensTotal : undefined,
+      estimatedPremiumUnits: pass.estimatedPremiumUnits,
+      actualPremiumUnits: receipt?.actualPremiumUnits,
+      premiumUnitDelta,
+      warning,
+    };
+  }
+
   reviewCard(passId: string): ReviewCard {
     const pass = this.mustPass(passId);
     const mission = this.mustMission(pass.missionId);
@@ -259,8 +324,10 @@ export class MissionLedger {
         estimatedPremiumUnits: pass.estimatedPremiumUnits,
         maxPremiumUnits: pass.maxPremiumUnits,
         unitCostBasis: pass.unitCostBasis,
+        receipt: pass.receipt,
         reason: pass.reason,
       },
+      variance: pass.receipt ? this.variance(pass.id) : undefined,
       artifacts: pass.manifest.artifacts,
       nextAction: pass.decision === 'blocked'
         ? 'Approve once, reduce scope, or keep waiting'
@@ -329,8 +396,13 @@ export class MissionLedger {
       `Mission: \`${card.mission.id}\` | Sticker: \`${card.mission.sticker ?? 'none'}\` | State: **${card.mission.state}**`,
       `Pass: \`${card.pass.id}\` | Role: \`${card.pass.role}\` | Model: \`${card.pass.model}\` | Decision: **${card.pass.decision}**`,
       `Spend: estimated \`$${card.pass.estimatedCost.toFixed(6)}\` | pass max \`$${card.pass.maxSpend.toFixed(6)}\` | mission remaining \`$${card.mission.budgetRemaining.toFixed(6)}\``,
+      ...(card.pass.receipt?.actualCostUsd !== undefined ? [`Actual spend: \`$${card.pass.receipt.actualCostUsd.toFixed(6)}\`${card.variance?.costDeltaUsd !== undefined ? ` | delta \`$${card.variance.costDeltaUsd.toFixed(6)}\`` : ''}`] : []),
       ...(card.pass.estimatedPremiumUnits !== undefined ? [`Premium units: estimated \`${card.pass.estimatedPremiumUnits.toFixed(3)}\`${card.pass.maxPremiumUnits !== undefined ? ` | pass max \`${card.pass.maxPremiumUnits.toFixed(3)}\`` : ''}${card.pass.unitCostBasis ? ` | basis \`${card.pass.unitCostBasis}\`` : ''}`] : []),
+      ...(card.pass.receipt?.actualPremiumUnits !== undefined ? [`Actual premium units: \`${card.pass.receipt.actualPremiumUnits.toFixed(3)}\``] : []),
       `Tokens: ${card.pass.estimatedTokensIn} in / ${card.pass.estimatedTokensOut} out`,
+      ...(card.pass.receipt?.actualTokensIn !== undefined || card.pass.receipt?.actualTokensOut !== undefined ? [`Actual tokens: ${card.pass.receipt.actualTokensIn ?? 0} in / ${card.pass.receipt.actualTokensOut ?? 0} out`] : []),
+      ...(card.pass.receipt?.cacheReadTokens !== undefined || card.pass.receipt?.cacheWriteTokens !== undefined ? [`Cache: ${card.pass.receipt.cacheReadTokens ?? 0} read / ${card.pass.receipt.cacheWriteTokens ?? 0} write tokens`] : []),
+      ...(card.variance?.warning ? [`Variance warning: **${card.variance.warning}**`] : []),
       `Reason: ${card.pass.reason ?? 'within budget'}`,
       '',
       'Artifacts:',

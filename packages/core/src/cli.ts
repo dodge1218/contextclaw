@@ -30,6 +30,8 @@ Commands:
   mission-approve --load <file> Approve a blocked pass in a saved ledger
   mission-reject --load <file>  Reject a pass and pause its mission
   mission-revise --load <file>  Create a smaller follow-up pass from an existing pass
+  mission-receipt --load <file> Record actual usage for a pass
+  mission-variance --load <file> Show estimate-vs-actual variance for a pass
   clear                         Clear the current session
   chat                          Start interactive chat (default)
   help                          Show this help
@@ -66,6 +68,8 @@ Examples:
   cc mission-approve --load /tmp/ledger.json --pass <id> --increase-budget 0.25
   cc mission-reject --load /tmp/ledger.json --pass <id> --reason "too broad"
   cc mission-revise --load /tmp/ledger.json --pass <id> --prompt "smaller pass" --output-tokens 500 --max-spend 0.01
+  cc mission-receipt --load /tmp/ledger.json --pass <id> --actual-cost 0.014 --tokens-in 12000 --tokens-out 800 --cache-read 9000
+  cc mission-variance --load /tmp/ledger.json --pass <id>
 `);
 }
 
@@ -338,6 +342,32 @@ async function main() {
       ledger.save(path);
       console.log(`Created revised pass ${revised.id}. Updated ledger saved to ${path}.`);
       console.log(ledger.renderReviewCard(revised.id));
+      break;
+    }
+
+    case 'mission-receipt': {
+      const path = requireStringFlag('--load');
+      const ledger = MissionLedger.load(path);
+      const passId = requireStringFlag('--pass');
+      ledger.recordReceipt(passId, {
+        actualCostUsd: Number(parseStringFlag('--actual-cost', '')) || undefined,
+        actualTokensIn: parseFlag('--tokens-in', 0) || undefined,
+        actualTokensOut: parseFlag('--tokens-out', 0) || undefined,
+        actualPremiumUnits: Number(parseStringFlag('--actual-premium-units', '')) || undefined,
+        cacheReadTokens: parseFlag('--cache-read', 0) || undefined,
+        cacheWriteTokens: parseFlag('--cache-write', 0) || undefined,
+        receiptSource: parseStringFlag('--source', 'manual') as 'provider' | 'gateway' | 'manual' | 'estimate-only',
+      });
+      ledger.save(path);
+      console.log(`Recorded receipt for ${passId}. Updated ledger saved to ${path}.`);
+      console.log(ledger.renderReviewCard(passId));
+      break;
+    }
+
+    case 'mission-variance': {
+      const ledger = MissionLedger.load(requireStringFlag('--load'));
+      const passId = requireStringFlag('--pass');
+      console.log(JSON.stringify(ledger.variance(passId), null, 2));
       break;
     }
 

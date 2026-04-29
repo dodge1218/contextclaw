@@ -149,6 +149,53 @@ describe('MissionLedger', () => {
     expect(ledger.renderReviewCard(pass.id)).toContain('Premium units');
   });
 
+  it('records receipts and computes variance', () => {
+    const ledger = new MissionLedger();
+    ledger.createMission({ id: 'mis_receipt', objective: 'receipt mission', budget: 1, sticker: 'RECEIPT' });
+    ledger.addArtifact({ missionId: 'mis_receipt', type: 'note', text: 'receipt context', sticker: 'RECEIPT' });
+    const pass = ledger.planPass({
+      missionId: 'mis_receipt',
+      role: 'planner',
+      model: 'local/free',
+      artifactIds: 'all',
+      prompt: 'receipt pass',
+      estimatedTokensOut: 100,
+      maxSpend: 1,
+      sticker: 'RECEIPT',
+    });
+
+    ledger.recordReceipt(pass.id, {
+      actualCostUsd: pass.estimatedCost * 2,
+      actualTokensIn: 120,
+      actualTokensOut: 80,
+      cacheReadTokens: 50,
+      receiptSource: 'manual',
+    });
+
+    const variance = ledger.variance(pass.id);
+    expect(variance.costRatio).toBe(2);
+    expect(variance.warning).toContain('actual cost');
+    expect(ledger.renderReviewCard(pass.id)).toContain('Actual spend');
+    expect(ledger.renderReviewCard(pass.id)).toContain('Cache: 50 read');
+  });
+
+  it('persists receipts across reloads', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'contextclaw-receipt-'));
+    const path = join(dir, 'ledger.json');
+    try {
+      const ledger = new MissionLedger();
+      ledger.createMission({ id: 'mis_receipt_persist', objective: 'receipt persist', budget: 1 });
+      ledger.addArtifact({ missionId: 'mis_receipt_persist', type: 'note', text: 'receipt context' });
+      const pass = ledger.planPass({ missionId: 'mis_receipt_persist', role: 'planner', model: 'local/free', artifactIds: 'all', prompt: 'receipt', estimatedTokensOut: 50, maxSpend: 1 });
+      ledger.recordReceipt(pass.id, { actualCostUsd: 0.01, receiptSource: 'manual' });
+      ledger.save(path);
+      const loaded = MissionLedger.load(path);
+      expect(loaded.reviewCard(pass.id).pass.receipt?.actualCostUsd).toBe(0.01);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('blocks over-budget passes and explains why', () => {
     const ledger = new MissionLedger();
     ledger.createMission({ id: 'mis_demo', objective: 'demo mission', budget: 0.01, sticker: 'DEMO' });
