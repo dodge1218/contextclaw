@@ -14,6 +14,7 @@ import { WebSocketServer } from 'ws';
 import { get_encoding } from 'tiktoken';
 import { classifyAll, TYPES } from './classifier.js';
 import { applyPolicy, DEFAULT_POLICIES } from './policy.js';
+import { RequestLedger, formatReceipt, getBudgetGateDecision } from './ledger.js';
 import {
   handleQuotaRotation,
   getProviderHealthSummary,
@@ -32,6 +33,7 @@ import { definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
 
 const STATS_PATH = join(homedir(), '.openclaw', '.contextclaw-stats.json');
 const HEURISTIC_COST_PER_MILLION = 3.0; // fallback when real pricing unavailable
+const STATS_SCHEMA_VERSION = 2;
 
 /** Resolve actual model pricing from gateway, or null if unavailable. */
 let _runtimeUsage = null;
@@ -47,16 +49,77 @@ function setRuntimeUsage(usage) {
  */
 function estimateSavings(charsSaved, modelId, provider) {
   const tokensSaved = Math.ceil(charsSaved / 4);
+  const resolved = resolveInputCostPerMillion({ modelId, provider });
+  return {
+    tokensSaved,
+    savingsUsd: (tokensSaved * resolved.inputCostPerMillion) / 1_000_000,
+    pricing: resolved,
+  };
+}
+
+function normalizeInputCostPerMillion(inputCost) {
+  if (!Number.isFinite(inputCost) || inputCost < 0) return null;
+  if (inputCost === 0) return 0;
+  // OpenClaw configs are mixed in the wild:
+  // - Anthropic native often stores dollars/token, e.g. 0.000005
+  // - OpenAI-compatible community configs often store dollars/M tokens, e.g. 0.3
+  return inputCost < 0.01 ? inputCost * 1_000_000 : inputCost;
+}
+
+function resolveConfiguredModelCost({ modelId, provider }) {
+  try {
+    const raw = readFileSync(join(homedir(), '.openclaw', 'openclaw.json'), 'utf8');
+    const config = JSON.parse(raw);
+    const providerName = provider || modelId?.split('/')?.[0];
+    const shortModel = modelId?.split('/')?.slice(1).join('/');
+    const models = config?.models?.providers?.[providerName]?.models || [];
+    const match = models.find(model => model.id === shortModel || `${providerName}/${model.id}` === modelId);
+    return match?.cost || null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveInputCostPerMillion({ modelId, provider }) {
   if (_runtimeUsage && _runtimeUsage.resolveModelCostConfig) {
     try {
-      const costConfig = _runtimeUsage.resolveModelCostConfig({ provider, model: modelId });
+      const shortModel = modelId?.split('/')?.slice(1).join('/');
+      const costConfig = _runtimeUsage.resolveModelCostConfig({ provider, model: modelId }) ||
+        _runtimeUsage.resolveModelCostConfig({ provider, model: shortModel });
       if (costConfig) {
-        // Input tokens saved (truncated context is input)
-        return (tokensSaved * costConfig.input) / 1_000_000;
+        const inputCostPerMillion = normalizeInputCostPerMillion(costConfig.input);
+        if (inputCostPerMillion != null) {
+          return {
+            source: 'runtime',
+            modelId: modelId || 'unknown/unknown',
+            provider: provider || modelId?.split('/')?.[0] || 'unknown',
+            inputCostPerMillion,
+            capturedAt: new Date().toISOString(),
+          };
+        }
       }
     } catch { /* fall through to heuristic */ }
   }
-  return (tokensSaved * HEURISTIC_COST_PER_MILLION) / 1_000_000;
+
+  const configuredCost = resolveConfiguredModelCost({ modelId, provider });
+  const configuredInputCostPerMillion = normalizeInputCostPerMillion(configuredCost?.input);
+  if (configuredInputCostPerMillion != null) {
+    return {
+      source: 'openclaw-config',
+      modelId: modelId || 'unknown/unknown',
+      provider: provider || modelId?.split('/')?.[0] || 'unknown',
+      inputCostPerMillion: configuredInputCostPerMillion,
+      capturedAt: new Date().toISOString(),
+    };
+  }
+
+  return {
+    source: 'heuristic',
+    modelId: modelId || 'unknown/unknown',
+    provider: provider || modelId?.split('/')?.[0] || 'unknown',
+    inputCostPerMillion: HEURISTIC_COST_PER_MILLION,
+    capturedAt: new Date().toISOString(),
+  };
 }
 
 function loadLifetimeStats() {
@@ -68,10 +131,24 @@ function loadLifetimeStats() {
       totalCharsSaved: prev.saved || 0,
       totalAssembleCalls: prev.assembles || 0,
       totalEstimatedSavingsUsd: prev.savingsUsd || 0,
+      totalEstimatedLedgerSpendUsd: prev.ledgerSpendUsd || 0,
+      totalEstimatedSubagentSpendUsd: prev.subagentSpendUsd || 0,
+      savingsByModel: prev.savingsByModel || {},
+      pricingSnapshots: prev.pricingSnapshots || {},
       byType: {},
     };
   } catch {
-    return { totalTruncated: 0, totalCharsSaved: 0, totalAssembleCalls: 0, totalEstimatedSavingsUsd: 0, byType: {} };
+    return {
+      totalTruncated: 0,
+      totalCharsSaved: 0,
+      totalAssembleCalls: 0,
+      totalEstimatedSavingsUsd: 0,
+      totalEstimatedLedgerSpendUsd: 0,
+      totalEstimatedSubagentSpendUsd: 0,
+      savingsByModel: {},
+      pricingSnapshots: {},
+      byType: {},
+    };
   }
 }
 
@@ -140,13 +217,90 @@ function countContentTokens(blocks) {
   return total;
 }
 
+function resolveConfiguredPrimaryModel() {
+  try {
+    const raw = readFileSync(join(homedir(), '.openclaw', 'openclaw.json'), 'utf8');
+    const config = JSON.parse(raw);
+    return config?.agents?.defaults?.model?.primary || 'unknown/unknown';
+  } catch {
+    return 'unknown/unknown';
+  }
+}
+
 // Default config
 const DEFAULT_CONFIG = {
   coldStorageDir: join(homedir(), '.openclaw', 'workspace', 'memory', 'cold'),
   wsPort: 41234,
   enableTelemetry: true,
   policies: {},  // per-type policy overrides
+  ledger: {
+    enabled: true,
+    path: join(homedir(), '.openclaw', 'contextclaw', 'ledger.jsonl'),
+    maxCallsPerPrompt: 8,
+    enforce: false,
+    maxEstimatedInputTokens: 32000,
+    maxEstimatedCostUsd: 0.15,
+    blockDuplicateContexts: true,
+    blockPremiumUntilFinalPass: false,
+    estimatedOutputTokens: 2048,
+    printReceipt: true,
+  },
 };
+
+function excerpt(text = '', limit = 1200) {
+  const normalized = String(text).replace(/\s+/g, ' ').trim();
+  return normalized.length > limit ? `${normalized.slice(0, limit)}...` : normalized;
+}
+
+function lastUserText(messages = []) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role !== 'user') continue;
+    const content = messages[i].content;
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      return content.map(block => {
+        if (typeof block === 'string') return block;
+        if (block?.type === 'text' && typeof block.text === 'string') return block.text;
+        return '';
+      }).join('\n');
+    }
+  }
+  return '';
+}
+
+function buildBudgetGateMessages({ ledgerEntry, reasons, originalMessages }) {
+  const reasonText = reasons.join(', ');
+  const promptExcerpt = excerpt(lastUserText(originalMessages));
+  return [
+    {
+      role: 'system',
+      content: [{
+        type: 'text',
+        text: [
+          'ContextClaw budget gate is active.',
+          'A high-cost or duplicate context was blocked before provider execution.',
+          'Do not attempt hidden retries or request the full prior context.',
+          'Give a concise status with the block reason, then ask for explicit final-pass approval or a cheaper model route.',
+        ].join(' '),
+      }],
+    },
+    {
+      role: 'user',
+      content: [
+        'ContextClaw blocked this LLM call before sending the large assembled context.',
+        `Reason: ${reasonText}`,
+        `Model: ${ledgerEntry.providerModel}`,
+        `Estimated input tokens: ${ledgerEntry.estimatedInputTokens}`,
+        `Estimated output tokens: ${ledgerEntry.estimatedOutputTokens}`,
+        `Estimated cost: $${ledgerEntry.costEstimateUsd.toFixed(6)}`,
+        `Prompt id: ${ledgerEntry.parentUserPromptId}`,
+        '',
+        'Last user prompt excerpt:',
+        promptExcerpt || '(no user prompt text found)',
+      ].join('\n'),
+    },
+  ];
+}
 
 // -------------------------------------------------------
 // Cold storage — flush truncated/evicted items to disk
@@ -210,6 +364,14 @@ class ContextClawEngine {
     };
     this._sessions = new Map();
     this.config = { ...DEFAULT_CONFIG, ...pluginConfig };
+    this.config.ledger = { ...DEFAULT_CONFIG.ledger, ...(pluginConfig?.ledger || {}) };
+    this.ledger = this.config.ledger.enabled ? new RequestLedger({
+      path: this.config.ledger.path,
+      maxCallsPerPrompt: this.config.ledger.maxCallsPerPrompt,
+      defaultModel: this.config.activeModel,
+      pricing: this.config.ledger.pricing || {},
+      runtimePricingResolver: _runtimeUsage?.resolveModelCostConfig?.bind(_runtimeUsage),
+    }) : null;
     this.wss = null;
     this.clients = new Set();
     if (this.config.enableTelemetry) {
@@ -362,6 +524,52 @@ class ContextClawEngine {
         return normalized;
       });
 
+      const preliminarySavedChars = results.reduce((sum, r) => sum + (r.savedChars || 0), 0);
+      const activeModel = this.config.activeModel || resolveConfiguredPrimaryModel();
+      const ledgerEntry = this.ledger?.recordEstimate({
+        sessionId,
+        sessionKey: sessionId,
+        sessionKind: sessionId && String(sessionId).includes('subagent') ? 'subagent' : 'main',
+        parentSessionKey: this.config.parentSessionKey,
+        childSessionKey: sessionId && String(sessionId).includes('subagent') ? sessionId : null,
+        agentId: this.config.agentId,
+        runId: this.config.runId,
+        missionId: this.config.missionId,
+        messages: kept,
+        modelId: activeModel,
+        estimatedInputTokens: estimatedTokens,
+        estimatedOutputTokens: this.config.ledger.estimatedOutputTokens,
+        compression: {
+          originalMessageCount: messages.length,
+          returnedMessageCount: kept.length,
+          charsSaved: preliminarySavedChars,
+          truncatedCount: truncatedItems.length,
+        },
+      });
+      if (ledgerEntry) {
+        stats.totalEstimatedLedgerSpendUsd = (stats.totalEstimatedLedgerSpendUsd || 0) + (ledgerEntry.costEstimateUsd || 0);
+        if (ledgerEntry.sessionKind === 'subagent') {
+          stats.totalEstimatedSubagentSpendUsd = (stats.totalEstimatedSubagentSpendUsd || 0) + (ledgerEntry.costEstimateUsd || 0);
+        }
+      }
+      const budgetGate = getBudgetGateDecision(ledgerEntry, this.config.ledger);
+      let returnedMessages = kept;
+      let returnedEstimatedTokens = estimatedTokens;
+      if (budgetGate.block) {
+        returnedMessages = buildBudgetGateMessages({
+          ledgerEntry,
+          reasons: budgetGate.reasons,
+          originalMessages: kept,
+        });
+        returnedEstimatedTokens = returnedMessages.reduce((sum, msg) => {
+          if (msg.role === 'user' && typeof msg.content === 'string') {
+            return sum + countTokens(msg.content);
+          }
+          return sum + countContentTokens(ensureContentBlocks(msg.content));
+        }, 0);
+        console.warn(`[ContextClaw budget gate] blocked context reasons=${budgetGate.reasons.join(',')} model=${activeModel} estimatedTokens=${estimatedTokens}`);
+      }
+
       // Stats
       let totalSavedChars = 0;
       let turnSavingsUsd = 0;
@@ -379,8 +587,36 @@ class ContextClawEngine {
         }
       }
       if (totalSavedChars > 0) {
-        turnSavingsUsd = estimateSavings(totalSavedChars);
+        const provider = activeModel?.split('/')?.[0];
+        const savings = estimateSavings(totalSavedChars, activeModel, provider);
+        turnSavingsUsd = savings.savingsUsd;
         stats.totalEstimatedSavingsUsd += turnSavingsUsd;
+
+        const modelKey = savings.pricing.modelId;
+        const existing = stats.savingsByModel[modelKey] || {
+          provider: savings.pricing.provider,
+          modelId: modelKey,
+          tokensSaved: 0,
+          charsSaved: 0,
+          savingsUsd: 0,
+          pricingSamples: [],
+        };
+        existing.tokensSaved += savings.tokensSaved;
+        existing.charsSaved += totalSavedChars;
+        existing.savingsUsd += turnSavingsUsd;
+        existing.lastInputCostPerMillion = savings.pricing.inputCostPerMillion;
+        existing.lastPricingSource = savings.pricing.source;
+        existing.lastCapturedAt = savings.pricing.capturedAt;
+        if (
+          existing.pricingSamples.length === 0 ||
+          existing.pricingSamples[existing.pricingSamples.length - 1].inputCostPerMillion !== savings.pricing.inputCostPerMillion ||
+          existing.pricingSamples[existing.pricingSamples.length - 1].source !== savings.pricing.source
+        ) {
+          existing.pricingSamples.push(savings.pricing);
+        }
+        if (existing.pricingSamples.length > 20) existing.pricingSamples = existing.pricingSamples.slice(-20);
+        stats.savingsByModel[modelKey] = existing;
+        stats.pricingSnapshots[modelKey] = savings.pricing;
       }
 
       // Track efficiency data point
@@ -390,8 +626,8 @@ class ContextClawEngine {
         tokensSaved: Math.ceil(totalSavedChars / 4),
         messageCount: messages.length,
         truncatedCount: results.filter(r => r.action === 'truncate').length,
-        modelId: undefined, // filled by gateway if available
-        provider: undefined,
+        modelId: activeModel,
+        provider: activeModel?.split('/')?.[0],
       });
 
       // Telemetry
@@ -409,6 +645,8 @@ class ContextClawEngine {
           usingRealPricing: !!_runtimeUsage,
           providerHealth: getProviderHealthSummary(),
           stuckSessions: getStuckSessionSummary(),
+          requestLedger: ledgerEntry,
+          budgetGate,
         });
       }
 
@@ -419,6 +657,10 @@ class ContextClawEngine {
           .join(', ');
         console.log(`[ContextClaw] ${summaryParts}`);
       }
+      if (ledgerEntry && this.config.ledger.printReceipt) {
+        const gateSuffix = budgetGate.block ? ` BLOCKED reasons=${budgetGate.reasons.join(',')}` : '';
+        console.log(`${formatReceipt(ledgerEntry)}${gateSuffix}`);
+      }
 
       // Write stats file for TUI footer (lifetime accumulator — survives restarts)
       try {
@@ -427,14 +669,19 @@ class ContextClawEngine {
           truncated: stats.totalTruncated,
           assembles: stats.totalAssembleCalls,
           savingsUsd: stats.totalEstimatedSavingsUsd,
+          ledgerSpendUsd: stats.totalEstimatedLedgerSpendUsd || 0,
+          subagentSpendUsd: stats.totalEstimatedSubagentSpendUsd || 0,
+          schemaVersion: STATS_SCHEMA_VERSION,
+          savingsByModel: stats.savingsByModel,
+          pricingSnapshots: stats.pricingSnapshots,
           usingRealPricing: !!_runtimeUsage,
           ts: Date.now(),
         }));
       } catch { /* non-critical */ }
 
       return {
-        messages: kept,
-        estimatedTokens,
+        messages: returnedMessages,
+        estimatedTokens: returnedEstimatedTokens,
         systemPromptAddition: buildMemorySystemPromptAddition({
           availableTools: availableTools ?? new Set(),
           citationsMode,
@@ -486,6 +733,22 @@ export default definePluginEntry({
     // Capture the usage API if available (requires openclaw with plugin-cost-api)
     if (api.usage) {
       setRuntimeUsage(api.usage);
+    }
+    if (typeof api.registerStatusProvider === 'function') {
+      api.registerStatusProvider({
+        id: 'contextclaw',
+        getStatus: () => {
+          try {
+            const saved = stats.totalCharsSaved || 0;
+            const spend = stats.totalEstimatedLedgerSpendUsd || 0;
+            const subagent = stats.totalEstimatedSubagentSpendUsd || 0;
+            const savedDisplay = saved >= 1_000_000 ? `${(saved / 1_000_000).toFixed(1)}M` : saved >= 1_000 ? `${(saved / 1_000).toFixed(1)}K` : `${saved}`;
+            return `ContextClaw: $${spend.toFixed(2)} est | $${subagent.toFixed(2)} sub | ${savedDisplay} chars saved`;
+          } catch {
+            return 'ContextClaw: ledger unavailable';
+          }
+        },
+      });
     }
     if (typeof api.registerContextEngine === 'function') {
       api.registerContextEngine('contextclaw', () => new ContextClawEngine(config));

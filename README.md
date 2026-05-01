@@ -2,83 +2,76 @@
 
 [![CI](https://github.com/dodge1218/contextclaw/actions/workflows/ci.yml/badge.svg)](https://github.com/dodge1218/contextclaw/actions/workflows/ci.yml)
 
-**Cost defense with memory for agentic work.** ContextClaw turns delegated AI work into missions, artifacts, bounded passes, budget decisions, and review cards so expensive model calls are visible before they happen.
+**OpenClaw-first context + spend control plane.** ContextClaw makes agent work auditable: what context was sent, which model priced it, what price snapshot was active, whether it was main or subagent work, and how cost accumulates over time without repricing history against today’s API prices.
 
-ContextClaw started as a context management plugin for [OpenClaw](https://github.com/openclaw/openclaw): classify every item in your context window by content type, truncate stale files, tail command output, and keep API bills low. That compression layer still matters. The new direction is bigger: make every agent pass accountable instead of repeatedly resending giant mutable prompts.
+ContextClaw is **not** an agent runtime, Claude Code clone, or LangChain roadmap. OpenClaw remains the runtime. ContextClaw is the governor: compression, request ledgers, budget gates, receipts, and TUI status.
 
+See the current product definition: [`PRD-CONTROL-PLANE.md`](PRD-CONTROL-PLANE.md).
 
-> **Part of the Token-Optimized Agentic Architecture.**
-> ContextClaw is Layer 1 (Real-Time Compression). See also: [Task-RAG MCP (Layer 2)](https://github.com/dodge1218/task-rag-mcp) | [Architecture Manifesto](https://github.com/dodge1218/agentic-efficiency)
+## Why this exists
 
-## New Direction: Cost Defense With Memory
+Agent systems hide spend in mutable prompts and subagent trees. A single “total tokens × current price” counter is not auditable because model prices change, cache tiers differ, and subagents run on different providers.
 
-ContextClaw is no longer just a token trimmer. The current product direction is **cost defense with memory for agentic work**.
+ContextClaw records each call boundary with its own pricing snapshot:
 
-The compression plugin remains Layer 1: classify context by content type, truncate stale tool output, and stop resending old Dockerfiles. But real agentic workflows need a higher-level control loop too:
-
-```text
-┌────────────┐   ┌─────────────────┐   ┌──────────────┐
-│  Mission   │ → │ Artifact ledger │ → │ Bounded pass │
-└────────────┘   └─────────────────┘   └──────┬───────┘
-                                                ↓
-                                      ┌─────────────────┐
-                                      │ Budget governor │
-                                      └──────┬──────────┘
-                                             ↓
-                                      ┌─────────────┐
-                                      │ Review feed │ → approve / reduce / continue
-                                      └─────────────┘
+```json
+{
+  "sessionKind": "subagent",
+  "parentSessionKey": "main-session",
+  "providerModel": "anthropic/claude-sonnet-4-6",
+  "estimatedInputTokens": 32000,
+  "estimatedOutputTokens": 2048,
+  "pricingSnapshot": {
+    "source": "openclaw-runtime",
+    "unit": "per_1m_tokens",
+    "input": 3.0,
+    "output": 15.0,
+    "capturedAt": "2026-04-30T...Z"
+  }
+}
 ```
 
-This turns invisible prompt spend into accountable work units:
+Historical summaries sum the captured per-entry costs. They do **not** multiply lifetime tokens by whatever the model costs today.
 
-- **Mission**: the delegated task and acceptance criteria.
-- **Artifact ledger**: durable context stored by hash instead of repeatedly pasted into mega-prompts.
-- **Pass manifest**: exactly which artifacts were included, with token/cost estimates.
-- **Budget governor**: blocks pass-level or mission-level overspend before provider calls.
-- **Review feed**: low-friction human approval cards for allowed and blocked work.
+## Product shape
 
-The first local MVP dogfoods this loop before returning to high-throughput security research. See [`docs/MISSION_LEDGER_MVP.md`](docs/MISSION_LEDGER_MVP.md), [`docs/PREDICTABLE_SPEND_MODEL.md`](docs/PREDICTABLE_SPEND_MODEL.md), and [`docs/MVP_REVIEW_FEED_DEMO.md`](docs/MVP_REVIEW_FEED_DEMO.md).
+```text
+OpenClaw runtime
+  ├─ main session calls
+  ├─ subagent calls
+  └─ background/cron calls
+        ↓
+ContextClaw control plane
+  ├─ context classification + compression
+  ├─ append-only request ledger
+  ├─ pricing snapshots per call
+  ├─ budget gates before provider execution
+  ├─ post-call receipts when usage is exposed
+  └─ TUI status provider
+```
 
-Try the friendly local demo first:
+## What is in scope now
+
+- OpenClaw plugin adapter.
+- Main/subagent spend accounting.
+- Per-call price snapshots.
+- Context compression and saved-token accounting.
+- Budget gates before expensive calls.
+- CLI audit/admin commands and demos.
+
+## Deferred / community welcome
+
+LangChain, CrewAI, AutoGen, Cline, and standalone runtime wrappers are intentionally not the MVP. If others want those adapters, great. This repo is OpenClaw-first until the control plane is boring, auditable, and trusted.
+
+## Local audit commands
 
 ```bash
+npm test
+npm run test:plugin
 npm run ledger
 ```
 
-This does **not** call a model. It only shows how ContextClaw would estimate and gate hypothetical passes before execution.
-
-Developer demos:
-
-```bash
-npm run mvp:help
-npm run demo:mission-ledger
-npm run demo:mission-ledger:ts
-```
-
-Or without npm:
-
-```bash
-python3 prototypes/contextclaw_mvp.py --help
-bash prototypes/demo_mission_ledger.sh
-```
-
-The Python demo creates a temporary mission, ingests docs as artifacts, allows one bounded pass, blocks one oversized pass, explains why it blocked, and prints a review-feed card. The TypeScript demo exercises the exported `MissionLedger` core scaffold directly. To save the TypeScript demo ledger for inspection:
-
-```bash
-npm run build
-node packages/core/dist/cli.js mission-demo --save /tmp/contextclaw-ledger-demo.json
-node packages/core/dist/cli.js mission-review --load /tmp/contextclaw-ledger-demo.json
-node packages/core/dist/cli.js mission-review --load /tmp/contextclaw-ledger-demo.json --format json
-node packages/core/dist/cli.js mission-why --load /tmp/contextclaw-ledger-demo.json
-node packages/core/dist/cli.js mission-approve --load /tmp/contextclaw-ledger-demo.json --pass <blocked-pass-id> --increase-budget 0.25
-node packages/core/dist/cli.js mission-reject --load /tmp/contextclaw-ledger-demo.json --pass <pass-id> --reason "too broad"
-node packages/core/dist/cli.js mission-revise --load /tmp/contextclaw-ledger-demo.json --pass <pass-id> --prompt "smaller pass" --output-tokens 500 --max-spend 0.01
-node packages/core/dist/cli.js mission-receipt --load /tmp/contextclaw-ledger-demo.json --pass <pass-id> --actual-cost 0.014 --tokens-in 12000 --tokens-out 800 --cache-read 9000
-node packages/core/dist/cli.js mission-variance --load /tmp/contextclaw-ledger-demo.json --pass <pass-id>
-```
-
-> Honest status: the mission-ledger prototype is a local CLI in `prototypes/contextclaw_mvp.py`. The OpenClaw context-engine plugin remains separate and should not be re-enabled in production until the registration/compatibility issue is fixed.
+The CLI is an audit/admin surface, not the product identity. The product is the ledger + budget control plane inside OpenClaw.
 
 ## Live Dogfooding Results
 

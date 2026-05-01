@@ -38,10 +38,11 @@ function updateStatus(ctx) {
   const truncated = stats.truncated || 0;
   const savingsUsd = stats.savingsUsd || 0;
   const usingRealPricing = stats.usingRealPricing || false;
+  const hasPricingSnapshots = Object.keys(stats.pricingSnapshots || {}).length > 0;
 
   let dollarDisplay;
-  if (usingRealPricing && savingsUsd > 0) {
-    // Real pricing from gateway's resolveModelCostConfig
+  if ((usingRealPricing || hasPricingSnapshots) && savingsUsd > 0) {
+    // Model-specific pricing captured at assemble time.
     dollarDisplay = `$${savingsUsd.toFixed(2)}`;
   } else {
     // Heuristic fallback: ~4 chars/token, $3/M input tokens

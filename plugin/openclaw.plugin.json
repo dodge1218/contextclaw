@@ -22,6 +22,64 @@
         "description": "Enable WebSocket telemetry broadcast",
         "default": true
       },
+      "activeModel": {
+        "type": "string",
+        "description": "Optional explicit provider/model id used for ContextClaw ledger estimates. Defaults to agents.defaults.model.primary."
+      },
+      "ledger": {
+        "type": "object",
+        "description": "Request ledger and pre-call cost-control settings",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "path": {
+            "type": "string",
+            "description": "JSONL path for request estimates and receipts",
+            "default": "~/.openclaw/contextclaw/ledger.jsonl"
+          },
+          "maxCallsPerPrompt": {
+            "type": "integer",
+            "default": 8
+          },
+          "enforce": {
+            "type": "boolean",
+            "description": "When true, replace over-budget assembled contexts with a tiny synthetic gate message before provider execution.",
+            "default": false
+          },
+          "maxEstimatedInputTokens": {
+            "type": "integer",
+            "default": 32000
+          },
+          "maxEstimatedCostUsd": {
+            "type": "number",
+            "default": 0.15
+          },
+          "blockDuplicateContexts": {
+            "type": "boolean",
+            "default": true
+          },
+          "blockPremiumUntilFinalPass": {
+            "type": "boolean",
+            "default": false
+          },
+          "estimatedOutputTokens": {
+            "type": "integer",
+            "default": 2048
+          },
+          "printReceipt": {
+            "type": "boolean",
+            "default": true
+          },
+          "pricing": {
+            "type": "object",
+            "description": "Optional per-model pricing override in dollars per million tokens",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      },
       "policies": {
         "type": "object",
         "description": "Per-type policy overrides (keyed by content type)",

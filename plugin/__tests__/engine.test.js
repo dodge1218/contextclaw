@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert';
+import { mkdtempSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { ContextClawEngine, computeTurnsAgo } from '../index.js';
 
 // -------------------------------------------------------
@@ -114,4 +117,37 @@ test('assemble strips internal metadata from output', async () => {
   const result = await engine.assemble({ sessionId: 'test-clean', messages });
   assert.strictEqual(result.messages[0]._type, undefined, 'No _type in output');
   assert.strictEqual(result.messages[0]._chars, undefined, 'No _chars in output');
+});
+
+test('assemble budget gate replaces oversized premium context with synthetic message', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'contextclaw-engine-ledger-'));
+  const engine = new ContextClawEngine({
+    enableTelemetry: false,
+    activeModel: 'anthropic/claude-opus-4-7',
+    ledger: {
+      enabled: true,
+      path: join(dir, 'ledger.jsonl'),
+      maxCallsPerPrompt: 8,
+      enforce: true,
+      maxEstimatedInputTokens: 100,
+      maxEstimatedCostUsd: 0.001,
+      blockPremiumUntilFinalPass: true,
+      estimatedOutputTokens: 100,
+      printReceipt: false,
+    },
+  });
+
+  const result = await engine.assemble({
+    sessionId: 'test-budget-gate',
+    messages: [
+      { role: 'system', content: 'You are helpful' },
+      { role: 'user', content: `explore and keep working ${'x'.repeat(2000)}` },
+    ],
+  });
+
+  assert.strictEqual(result.messages.length, 2);
+  assert.strictEqual(result.messages[0].role, 'system');
+  assert.match(result.messages[0].content[0].text, /budget gate is active/i);
+  assert.match(result.messages[1].content, /Reason: premium-deferred, input-token-budget, cost-budget/);
+  assert.ok(result.estimatedTokens < 500);
 });
