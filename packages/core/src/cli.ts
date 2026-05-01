@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { startChat } from './chat.js';
 import { startInspector } from './inspector/server.js';
 import { GatewayClient } from './gateway-client.js';
@@ -25,6 +28,10 @@ Commands:
   eval [--verbose]              Run quality eval (proves compression doesn't degrade output)
   inspect                       Start inspector web UI on port 3333
   ledger                        Friendly local ledger demo (no model call)
+  ledger-tail                   Tail OpenClaw request ledger JSONL
+  ledger-summary                Summarize OpenClaw request ledger spend
+  ledger-session <sessionKey>   Summarize a session + its subagents
+  ledger-subagents <sessionKey> Show subagent spend rolled up to a parent session
   mission-demo                  Developer demo: mission ledger budget gate + review feed
   mission-review --load <file>  Print review cards from a saved mission ledger
   mission-why --load <file>     Explain the latest blocked pass in a saved ledger
@@ -62,6 +69,8 @@ Examples:
   cc eval                    Run quality eval with defaults
   cc eval --verbose          Eval with per-task breakdown
   cc ledger                  Friendly local ledger demo, no model call
+  cc ledger-summary --today  Summarize today’s audited estimates/receipts
+  cc ledger-session main     Summarize one session and child subagents
   cc mission-demo            Developer JSON demo, no model call
   cc mission-demo --save /tmp/ledger.json
   cc mission-review --load /tmp/ledger.json
@@ -94,6 +103,120 @@ function requireStringFlag(flag: string): string {
     process.exit(1);
   }
   return value;
+}
+
+const DEFAULT_REQUEST_LEDGER = join(homedir(), '.openclaw', 'contextclaw', 'ledger.jsonl');
+
+type RequestLedgerEntry = {
+  event?: string;
+  timestamp?: string;
+  providerModel?: string;
+  provider?: string;
+  model?: string;
+  sessionKind?: string;
+  sessionKey?: string | null;
+  parentSessionKey?: string | null;
+  childSessionKey?: string | null;
+  missionId?: string | null;
+  costEstimateUsd?: number | null;
+  actualCostUsd?: number | null;
+  estimatedInputTokens?: number | null;
+  estimatedOutputTokens?: number | null;
+  actualInputTokens?: number | null;
+  actualOutputTokens?: number | null;
+};
+
+function parseSinceFlag(): string | undefined {
+  if (process.argv.includes('--today')) {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+  }
+  const since = parseStringFlag('--since', '');
+  if (!since) return undefined;
+  const match = since.match(/^(\d+)([dh])$/i);
+  if (match) {
+    const amount = Number(match[1]);
+    const unit = match[2].toLowerCase();
+    const ms = amount * (unit === 'd' ? 86_400_000 : 3_600_000);
+    return new Date(Date.now() - ms).toISOString();
+  }
+  return new Date(since).toISOString();
+}
+
+function requestLedgerPath(): string {
+  return parseStringFlag('--path', DEFAULT_REQUEST_LEDGER).replace(/^~\//, `${homedir()}/`);
+}
+
+function readRequestLedger(path = requestLedgerPath()): RequestLedgerEntry[] {
+  if (!existsSync(path)) return [];
+  return readFileSync(path, 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as RequestLedgerEntry);
+}
+
+function summarizeRequestLedger(entries: RequestLedgerEntry[], opts: { since?: string; sessionKey?: string } = {}) {
+  const sinceMs = opts.since ? new Date(opts.since).getTime() : undefined;
+  const filtered = entries.filter((entry) => {
+    if (sinceMs && entry.timestamp && new Date(entry.timestamp).getTime() < sinceMs) return false;
+    if (opts.sessionKey) {
+      return entry.sessionKey === opts.sessionKey || entry.parentSessionKey === opts.sessionKey || entry.childSessionKey === opts.sessionKey;
+    }
+    return true;
+  });
+  const summary = {
+    entries: filtered.length,
+    estimates: 0,
+    receipts: 0,
+    estimatedCostUsd: 0,
+    actualCostUsd: 0,
+    estimatedTokens: 0,
+    actualTokens: 0,
+    byModel: new Map<string, { entries: number; estimatedCostUsd: number; actualCostUsd: number }>(),
+    bySessionKind: new Map<string, { entries: number; estimatedCostUsd: number; actualCostUsd: number }>(),
+  };
+  for (const entry of filtered) {
+    const model = entry.providerModel || `${entry.provider || 'unknown'}/${entry.model || 'unknown'}`;
+    const kind = entry.sessionKind || 'unknown';
+    const modelRow = summary.byModel.get(model) || { entries: 0, estimatedCostUsd: 0, actualCostUsd: 0 };
+    const kindRow = summary.bySessionKind.get(kind) || { entries: 0, estimatedCostUsd: 0, actualCostUsd: 0 };
+    modelRow.entries++;
+    kindRow.entries++;
+    if (entry.event === 'receipt') {
+      summary.receipts++;
+      const cost = entry.actualCostUsd || 0;
+      summary.actualCostUsd += cost;
+      modelRow.actualCostUsd += cost;
+      kindRow.actualCostUsd += cost;
+      summary.actualTokens += (entry.actualInputTokens || 0) + (entry.actualOutputTokens || 0);
+    } else {
+      summary.estimates++;
+      const cost = entry.costEstimateUsd || 0;
+      summary.estimatedCostUsd += cost;
+      modelRow.estimatedCostUsd += cost;
+      kindRow.estimatedCostUsd += cost;
+      summary.estimatedTokens += (entry.estimatedInputTokens || 0) + (entry.estimatedOutputTokens || 0);
+    }
+    summary.byModel.set(model, modelRow);
+    summary.bySessionKind.set(kind, kindRow);
+  }
+  return summary;
+}
+
+function printRequestLedgerSummary(entries: RequestLedgerEntry[], opts: { since?: string; sessionKey?: string } = {}) {
+  const summary = summarizeRequestLedger(entries, opts);
+  console.log(`Entries: ${summary.entries} (${summary.estimates} estimates, ${summary.receipts} receipts)`);
+  console.log(`Estimated: $${summary.estimatedCostUsd.toFixed(6)} across ${summary.estimatedTokens.toLocaleString()} tokens`);
+  console.log(`Actual:    $${summary.actualCostUsd.toFixed(6)} across ${summary.actualTokens.toLocaleString()} tokens`);
+  console.log('\nBy session kind:');
+  for (const [kind, row] of [...summary.bySessionKind.entries()].sort()) {
+    console.log(`  ${kind}: ${row.entries} entries, est $${row.estimatedCostUsd.toFixed(6)}, actual $${row.actualCostUsd.toFixed(6)}`);
+  }
+  console.log('\nBy model:');
+  for (const [model, row] of [...summary.byModel.entries()].sort((a, b) => (b[1].estimatedCostUsd + b[1].actualCostUsd) - (a[1].estimatedCostUsd + a[1].actualCostUsd))) {
+    console.log(`  ${model}: ${row.entries} entries, est $${row.estimatedCostUsd.toFixed(6)}, actual $${row.actualCostUsd.toFixed(6)}`);
+  }
 }
 
 async function main() {
@@ -286,6 +409,45 @@ async function main() {
       console.log(`- Decision: ${blocked.decision} (${blocked.reason})`);
       console.log('\nWhat this means: ContextClaw can say “this pass is too expensive / too many premium units” before execution.');
       console.log('Next real integration is wiring actual OpenClaw/provider receipts into this ledger.');
+      break;
+    }
+
+    case 'ledger-tail': {
+      const limit = parseFlag('--limit', 20);
+      const entries = readRequestLedger();
+      for (const entry of entries.slice(-limit)) {
+        console.log(JSON.stringify(entry));
+      }
+      break;
+    }
+
+    case 'ledger-summary': {
+      const entries = readRequestLedger();
+      const since = parseSinceFlag();
+      printRequestLedgerSummary(entries, { since });
+      break;
+    }
+
+    case 'ledger-session': {
+      const sessionKey = process.argv[3] || requireStringFlag('--session');
+      const entries = readRequestLedger();
+      printRequestLedgerSummary(entries, { sessionKey, since: parseSinceFlag() });
+      break;
+    }
+
+    case 'ledger-subagents': {
+      const parent = process.argv[3] || requireStringFlag('--parent');
+      const entries = readRequestLedger().filter((entry) => entry.parentSessionKey === parent || (entry.sessionKey === parent && entry.sessionKind === 'subagent'));
+      printRequestLedgerSummary(entries, { since: parseSinceFlag() });
+      const children = new Map<string, number>();
+      for (const entry of entries) {
+        const key = entry.childSessionKey || entry.sessionKey || 'unknown';
+        children.set(key, (children.get(key) || 0) + (entry.costEstimateUsd || entry.actualCostUsd || 0));
+      }
+      console.log('\nChildren:');
+      for (const [child, cost] of [...children.entries()].sort((a, b) => b[1] - a[1])) {
+        console.log(`  ${child}: $${cost.toFixed(6)}`);
+      }
       break;
     }
 
