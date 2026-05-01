@@ -8,7 +8,7 @@ ContextClaw makes agent work auditable: what context was sent, which model price
 
 ContextClaw is **not** an agent runtime, Claude Code clone, or LangChain roadmap. OpenClaw remains the runtime. ContextClaw is the governor, not the muzzle: compression, request ledgers, budget gates, receipts, and TUI status without crippling the model’s useful output.
 
-See the current product definition: [`PRD-CONTROL-PLANE.md`](PRD-CONTROL-PLANE.md).
+See the current product definition: [`PRD-CONTROL-PLANE.md`](PRD-CONTROL-PLANE.md). Serious changes follow [`docs/PRD-STANDARD.md`](docs/PRD-STANDARD.md) and [`docs/GITHUB-SUBMISSION-STANDARD.md`](docs/GITHUB-SUBMISSION-STANDARD.md).
 
 ## Why this exists
 
