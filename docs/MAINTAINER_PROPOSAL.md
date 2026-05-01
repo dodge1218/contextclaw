@@ -214,3 +214,19 @@ This is the product line between useful governance and harmful muzzling:
 - Bad: compress away task intent, evidence, blockers, or acceptance criteria.
 
 The policy should stay auditable: if ContextClaw warns or blocks, it should say exactly why.
+
+## Usage Attribution Ledger Principle
+
+ContextClaw's long-term value is not only that it compacts context. It also gives OpenClaw a project-aware, subagent-aware, model-aware usage ledger.
+
+The user problem is simple: vibe coders do not know where their usage went. A long-running agent tree can spend across provider auth profiles, premium models, fallback models, subagents, retries, tool calls, and hidden context assembly. Without structured attribution, users cannot tell whether usage bought a useful artifact or disappeared into stale context and retries.
+
+ContextClaw should make this auditable by tracking:
+
+- provider/model/auth profile;
+- estimated and actual token/cost where providers expose receipts;
+- parent session, subagent, tool, and mission/project attribution;
+- compression savings and duplicate-context/retry waste;
+- human-readable receipts tied to work artifacts.
+
+A future social/analytics layer could let vibe coders publish sanitized non-PII metadata about spend efficiency and artifacts built. That is deliberately out of current scope because rankings are gameable and output quality is ambiguous. The near-term maintainer-grade ask is more basic and more valuable: local self-audit plus clean metadata hooks so the ecosystem can learn efficiency patterns safely.

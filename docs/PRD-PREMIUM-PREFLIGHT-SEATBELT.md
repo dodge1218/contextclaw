@@ -112,3 +112,9 @@ Required test coverage:
 - Disable `enforcePremiumPreflight` / do not set it.
 - Revert the pure helper and tests without touching plugin registration.
 - Since OpenClaw config is not mutated, rollback is repo-only.
+
+## Related doctrine: spend attribution
+
+Premium preflight should feed the broader usage ledger, not only block expensive calls. Every preflight decision should be attributable to model/provider/auth profile, parent session, subagent/tool, and project/mission where available. This keeps spend governance tied to real work instead of abstract token math.
+
+Out of scope for this PRD: social leaderboards, efficiency ranking, or public metadata publishing. Those belong to a future sanitized-export/analytics PRD after local attribution is trustworthy.
