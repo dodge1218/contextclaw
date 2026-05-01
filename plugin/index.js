@@ -372,6 +372,8 @@ class ContextClawEngine {
       pricing: this.config.ledger.pricing || {},
       runtimePricingResolver: _runtimeUsage?.resolveModelCostConfig?.bind(_runtimeUsage),
     }) : null;
+    this._latestEstimateByRun = new Map();
+    this._latestEstimateBySession = new Map();
     this.wss = null;
     this.clients = new Set();
     if (this.config.enableTelemetry) {
@@ -548,6 +550,8 @@ class ContextClawEngine {
       });
       if (ledgerEntry) {
         stats.totalEstimatedLedgerSpendUsd = (stats.totalEstimatedLedgerSpendUsd || 0) + (ledgerEntry.costEstimateUsd || 0);
+        if (ledgerEntry.runId) this._latestEstimateByRun.set(ledgerEntry.runId, ledgerEntry);
+        if (ledgerEntry.sessionKey) this._latestEstimateBySession.set(ledgerEntry.sessionKey, ledgerEntry);
         if (ledgerEntry.sessionKind === 'subagent') {
           stats.totalEstimatedSubagentSpendUsd = (stats.totalEstimatedSubagentSpendUsd || 0) + (ledgerEntry.costEstimateUsd || 0);
         }
@@ -699,6 +703,40 @@ class ContextClawEngine {
     }
   }
 
+  recordLlmOutput(event = {}, ctx = {}) {
+    if (!this.ledger || !event.usage) return null;
+    const sessionKey = ctx.sessionKey || event.sessionKey || event.sessionId || ctx.sessionId;
+    const estimate = (event.runId && this._latestEstimateByRun.get(event.runId)) ||
+      (sessionKey && this._latestEstimateBySession.get(sessionKey)) ||
+      null;
+    const usage = event.usage || {};
+    const receipt = this.ledger.recordReceipt({
+      estimateEntry: estimate,
+      estimateEntryId: estimate?.id || null,
+      sessionKey,
+      sessionId: event.sessionId || ctx.sessionId,
+      sessionKind: estimate?.sessionKind || (String(sessionKey || '').includes('subagent') ? 'subagent' : 'main'),
+      parentSessionKey: estimate?.parentSessionKey || null,
+      childSessionKey: estimate?.childSessionKey || null,
+      agentId: ctx.agentId || estimate?.agentId || null,
+      runId: event.runId || ctx.runId || null,
+      modelId: event.resolvedRef || `${event.provider || 'unknown'}/${event.model || 'unknown'}`,
+      actualInputTokens: usage.input ?? null,
+      actualOutputTokens: usage.output ?? null,
+      actualCacheReadTokens: usage.cacheRead ?? null,
+      actualCacheWriteTokens: usage.cacheWrite ?? null,
+      actualUsageStatus: 'available',
+      stopReason: event.lastAssistant?.stopReason || null,
+    });
+    if (receipt?.actualCostUsd) {
+      if (receipt.sessionKind === 'subagent') {
+        stats.totalEstimatedSubagentSpendUsd = (stats.totalEstimatedSubagentSpendUsd || 0) + receipt.actualCostUsd;
+      }
+    }
+    this._broadcast({ type: 'LLM_USAGE_RECEIPT', receipt });
+    return receipt;
+  }
+
   async compact(params) {
     return await delegateCompactionToRuntime(params);
   }
@@ -734,6 +772,16 @@ export default definePluginEntry({
     if (api.usage) {
       setRuntimeUsage(api.usage);
     }
+    const engine = new ContextClawEngine(config);
+    if (typeof api.registerHook === 'function') {
+      api.registerHook('llm_output', (event, ctx) => {
+        try {
+          engine.recordLlmOutput(event, ctx);
+        } catch (error) {
+          api.logger?.warn?.(`[ContextClaw] llm_output receipt failed: ${error?.message || String(error)}`);
+        }
+      });
+    }
     if (typeof api.registerStatusProvider === 'function') {
       api.registerStatusProvider({
         id: 'contextclaw',
@@ -751,7 +799,7 @@ export default definePluginEntry({
       });
     }
     if (typeof api.registerContextEngine === 'function') {
-      api.registerContextEngine('contextclaw', () => new ContextClawEngine(config));
+      api.registerContextEngine('contextclaw', () => engine);
       console.log('[ContextClaw] context engine registered successfully');
     } else {
       console.warn('[ContextClaw] api.registerContextEngine not available — api keys:', Object.keys(api).join(', '));
