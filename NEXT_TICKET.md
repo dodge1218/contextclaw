@@ -1,23 +1,55 @@
-# NEXT_TICKET: Wire provider/gateway receipts into mission ledger automatically
+# NEXT_TICKET: Implement pure autocompaction policy MVP
 
 ## Category
-🔴 CRITICAL after manual receipt review.
+🔴 CRITICAL, ContextClaw core direction.
 
 ## Why
-Manual receipts and variance tracking now work. The next step is automatic receipt ingestion from OpenClaw/gateway/provider usage metadata after a pass executes.
+Ryan identified the distilled ContextClaw primitive: a custom autocompaction policy that labels context as it enters, then reevaluates labels before every pass. This should replace ad hoc relevance scoring and prevent wrong-lane drift, e.g. stale bounty context staying hot after Ryan corrected back to websites.
+
+## Spec
+Read first:
+
+- `docs/AUTOCOMPACTION_POLICY_PRD.md`
 
 ## Scope
-- Identify where OpenClaw exposes actual usage/cost/cache data for a model call.
-- Map usage metadata into `UsageReceipt`.
-- Call `recordReceipt(passId, receipt)` after execution.
-- Preserve framework-agnostic core. Integration code should live outside the core ledger.
+Implement pure policy code first, with no OpenClaw plugin re-enable and no OpenClaw config mutation.
 
-## Acceptance criteria
-- A saved ledger can record actual provider/gateway usage without manual CLI entry.
-- Review card shows estimate vs actual.
-- Variance warning appears when actual cost materially exceeds estimate.
-- No unsafe ContextClaw plugin re-enable until registration compatibility is fixed.
+Add:
+
+- `plugin/autocompaction-policy.js`
+- `plugin/__tests__/autocompaction-policy.test.js`
+
+Export pure functions:
+
+- `labelContextItem(item, state)`
+- `resolveCurrentTaskState(items)`
+- `reevaluateLabels(labels, state)`
+- `planCompactionActions(labels, state)`
+- `assembleWorkingSet(items, actions, options)`
+
+## Required behaviors
+
+1. Ingress labels include: project, task, lane, contentType, source, tokenEstimate, importance, lifespan, privacy, costRisk, stale, summary, coldPointer.
+2. Detect correction events like:
+   - “no, we were actually doing websites”
+   - “bruh”
+   - “stop, wrong direction”
+3. On correction, mark conflicting lane labels stale and boost matching lane labels.
+4. Bulky file/tool/browser outputs become summary + cold pointer after their first useful turn.
+5. Secrets/config dumps are redacted from active working set.
+6. Current task status ledgers stay hot as summaries.
+
+## Acceptance tests
+
+- Wrong-lane correction test: bounty context becomes stale, website/Instant Cash context stays hot.
+- Bulky file lifecycle test: raw large file drops to summary + cold pointer.
+- Unresolved error test: failing current-task command stays hot as summarized error.
+- Secret-risk test: key-shaped values never appear in assembled output.
 
 ## Constraints
-- Do not claim automatic provider receipts are implemented before this is wired.
-- Keep manual receipt CLI as fallback.
+
+- No OpenClaw config edits.
+- No plugin registration changes.
+- No provider calls or embeddings for MVP.
+- Deterministic, fast, unit-testable.
+- Keep existing classifier/policy behavior intact unless explicitly replacing with tests.
