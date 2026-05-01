@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { startChat } from './chat.js';
@@ -32,6 +32,8 @@ Commands:
   ledger-summary                Summarize OpenClaw request ledger spend
   ledger-session <sessionKey>   Summarize a session + its subagents
   ledger-subagents <sessionKey> Show subagent spend rolled up to a parent session
+  ledger-explain <entryId>      Explain a ledger entry and captured price
+  ledger-receipt <entryId>      Append actual usage receipt for an estimate
   mission-demo                  Developer demo: mission ledger budget gate + review feed
   mission-review --load <file>  Print review cards from a saved mission ledger
   mission-why --load <file>     Explain the latest blocked pass in a saved ledger
@@ -124,6 +126,22 @@ type RequestLedgerEntry = {
   estimatedOutputTokens?: number | null;
   actualInputTokens?: number | null;
   actualOutputTokens?: number | null;
+  actualCacheReadTokens?: number | null;
+  actualCacheWriteTokens?: number | null;
+  estimateEntryId?: string | null;
+  pricingSnapshot?: {
+    provider?: string;
+    model?: string;
+    providerModel?: string;
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    source?: string;
+    unit?: string;
+    capturedAt?: string;
+    configHash?: string;
+  };
 };
 
 function parseSinceFlag(): string | undefined {
@@ -202,6 +220,39 @@ function summarizeRequestLedger(entries: RequestLedgerEntry[], opts: { since?: s
     summary.bySessionKind.set(kind, kindRow);
   }
   return summary;
+}
+
+function estimateCostFromEntrySnapshot(entry: RequestLedgerEntry, usage: { input: number; output: number; cacheRead: number; cacheWrite: number }) {
+  const price = entry.pricingSnapshot || {};
+  return (
+    usage.input * (price.input || 0) +
+    usage.output * (price.output || 0) +
+    usage.cacheRead * (price.cacheRead || 0) +
+    usage.cacheWrite * (price.cacheWrite || 0)
+  ) / 1_000_000;
+}
+
+function appendRequestLedgerEntry(path: string, entry: RequestLedgerEntry & Record<string, unknown>) {
+  appendFileSync(path, `${JSON.stringify(entry)}\n`);
+}
+
+function findLedgerEntry(entries: RequestLedgerEntry[], id: string) {
+  return entries.find((entry) => (entry as { id?: string }).id === id);
+}
+
+function printLedgerEntry(entry: RequestLedgerEntry & Record<string, unknown>) {
+  console.log(`Entry: ${entry.id || '(no id)'}`);
+  console.log(`Event: ${entry.event || 'estimate'}`);
+  console.log(`Time:  ${entry.timestamp || '(unknown)'}`);
+  console.log(`Scope: ${entry.sessionKind || 'unknown'} session=${entry.sessionKey || '(none)'} parent=${entry.parentSessionKey || '(none)'}`);
+  console.log(`Model: ${entry.providerModel || `${entry.provider || 'unknown'}/${entry.model || 'unknown'}`}`);
+  console.log(`Estimate: $${(entry.costEstimateUsd || 0).toFixed(6)} input=${entry.estimatedInputTokens || 0} output=${entry.estimatedOutputTokens || 0}`);
+  console.log(`Actual:   $${(entry.actualCostUsd || 0).toFixed(6)} input=${entry.actualInputTokens || 0} output=${entry.actualOutputTokens || 0} status=${entry.actualUsageStatus || 'unavailable'}`);
+  if (entry.pricingSnapshot) {
+    console.log('Pricing snapshot:');
+    console.log(`  source=${entry.pricingSnapshot.source || 'unknown'} hash=${entry.pricingSnapshot.configHash || 'none'} captured=${entry.pricingSnapshot.capturedAt || 'unknown'}`);
+    console.log(`  input=${entry.pricingSnapshot.input || 0} output=${entry.pricingSnapshot.output || 0} cacheRead=${entry.pricingSnapshot.cacheRead || 0} cacheWrite=${entry.pricingSnapshot.cacheWrite || 0} ${entry.pricingSnapshot.unit || 'per_1m_tokens'}`);
+  }
 }
 
 function printRequestLedgerSummary(entries: RequestLedgerEntry[], opts: { since?: string; sessionKey?: string } = {}) {
@@ -448,6 +499,66 @@ async function main() {
       for (const [child, cost] of [...children.entries()].sort((a, b) => b[1] - a[1])) {
         console.log(`  ${child}: $${cost.toFixed(6)}`);
       }
+      break;
+    }
+
+    case 'ledger-explain': {
+      const id = process.argv[3] || requireStringFlag('--entry');
+      const entry = findLedgerEntry(readRequestLedger(), id);
+      if (!entry) {
+        console.error(`Ledger entry not found: ${id}`);
+        process.exit(1);
+      }
+      printLedgerEntry(entry as RequestLedgerEntry & Record<string, unknown>);
+      break;
+    }
+
+    case 'ledger-receipt': {
+      const estimateId = process.argv[3] || requireStringFlag('--estimate');
+      const path = requestLedgerPath();
+      const entries = readRequestLedger(path);
+      const estimate = findLedgerEntry(entries, estimateId);
+      if (!estimate) {
+        console.error(`Estimate entry not found: ${estimateId}`);
+        process.exit(1);
+      }
+      const usage = {
+        input: parseFlag('--tokens-in', 0),
+        output: parseFlag('--tokens-out', 0),
+        cacheRead: parseFlag('--cache-read', 0),
+        cacheWrite: parseFlag('--cache-write', 0),
+      };
+      const explicitCost = parseStringFlag('--actual-cost', '');
+      const actualCostUsd = explicitCost ? Number(explicitCost) : estimateCostFromEntrySnapshot(estimate, usage);
+      const receipt: RequestLedgerEntry & Record<string, unknown> = {
+        id: `receipt_${Date.now().toString(36)}`,
+        schemaVersion: 2,
+        timestamp: new Date().toISOString(),
+        event: 'receipt',
+        estimateEntryId: estimateId,
+        sessionKind: estimate.sessionKind,
+        sessionKey: estimate.sessionKey,
+        parentSessionKey: estimate.parentSessionKey,
+        childSessionKey: estimate.childSessionKey,
+        missionId: estimate.missionId,
+        provider: estimate.provider,
+        model: estimate.model,
+        providerModel: estimate.providerModel,
+        pricingSnapshot: estimate.pricingSnapshot,
+        actualInputTokens: usage.input,
+        actualOutputTokens: usage.output,
+        actualCacheReadTokens: usage.cacheRead,
+        actualCacheWriteTokens: usage.cacheWrite,
+        actualUsageStatus: 'available',
+        actualCostUsd,
+        costEstimateUsd: estimate.costEstimateUsd ?? null,
+        costVarianceUsd: estimate.costEstimateUsd == null ? null : actualCostUsd - estimate.costEstimateUsd,
+        receiptSource: parseStringFlag('--source', 'manual'),
+        stopReason: parseStringFlag('--stop-reason', ''),
+      };
+      appendRequestLedgerEntry(path, receipt);
+      console.log(`Appended receipt for ${estimateId} to ${path}`);
+      printLedgerEntry(receipt);
       break;
     }
 

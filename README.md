@@ -74,6 +74,16 @@ npm run demo:control-plane
 
 `demo:control-plane` creates a deterministic ledger with a main session, a premium subagent, a later main call after a price change, and an actual-usage receipt. The rollup proves ContextClaw sums entry-level price snapshots instead of repricing lifetime tokens against one current model price.
 
+Audit an OpenClaw ledger:
+
+```bash
+cc ledger-summary --today
+cc ledger-session <sessionKey>
+cc ledger-subagents <parentSessionKey>
+cc ledger-explain <entryId>
+cc ledger-receipt <entryId> --tokens-in 12000 --tokens-out 800 --source manual
+```
+
 The CLI is an audit/admin surface, not the product identity. The product is the ledger + budget control plane inside OpenClaw.
 
 ## Live Dogfooding Results
