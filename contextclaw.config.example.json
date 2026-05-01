@@ -1,0 +1,73 @@
+{
+  "profile": "premium_final_only",
+  "profiles": {
+    "safe_budget": {
+      "ledger": {
+        "enabled": true,
+        "path": "~/.openclaw/contextclaw/ledger.jsonl",
+        "maxCallsPerPrompt": 4,
+        "enforce": true,
+        "maxEstimatedInputTokens": 24000,
+        "maxEstimatedCostUsd": 0.02,
+        "blockDuplicateContexts": true,
+        "blockPremiumUntilFinalPass": true,
+        "estimatedOutputTokens": 1024,
+        "printReceipt": true
+      }
+    },
+    "balanced": {
+      "ledger": {
+        "enabled": true,
+        "path": "~/.openclaw/contextclaw/ledger.jsonl",
+        "maxCallsPerPrompt": 8,
+        "enforce": true,
+        "maxEstimatedInputTokens": 64000,
+        "maxEstimatedCostUsd": 0.2,
+        "blockDuplicateContexts": true,
+        "blockPremiumUntilFinalPass": false,
+        "estimatedOutputTokens": 2048,
+        "printReceipt": true
+      }
+    },
+    "premium_final_only": {
+      "ledger": {
+        "enabled": true,
+        "path": "~/.openclaw/contextclaw/ledger.jsonl",
+        "maxCallsPerPrompt": 12,
+        "enforce": true,
+        "maxEstimatedInputTokens": 32000,
+        "maxEstimatedCostUsd": 0.05,
+        "blockDuplicateContexts": true,
+        "blockPremiumUntilFinalPass": true,
+        "estimatedOutputTokens": 2048,
+        "printReceipt": true
+      },
+      "routing": {
+        "cheap": [
+          "gemini/gemini-2.5-flash",
+          "deepseek/deepseek-chat",
+          "github-copilot/gpt-4o"
+        ],
+        "premium": [
+          "anthropic/claude-opus-4-7",
+          "openrouter/anthropic/claude-opus-4.7"
+        ],
+        "premiumEscalation": "final_pass_only"
+      }
+    },
+    "research_burst": {
+      "ledger": {
+        "enabled": true,
+        "path": "~/.openclaw/contextclaw/ledger.jsonl",
+        "maxCallsPerPrompt": 24,
+        "enforce": true,
+        "maxEstimatedInputTokens": 96000,
+        "maxEstimatedCostUsd": 0.5,
+        "blockDuplicateContexts": true,
+        "blockPremiumUntilFinalPass": false,
+        "estimatedOutputTokens": 4096,
+        "printReceipt": true
+      }
+    }
+  }
+}
