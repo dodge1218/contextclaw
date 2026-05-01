@@ -9,6 +9,8 @@ Ryan identified the distilled ContextClaw primitive: a custom autocompaction pol
 ## Spec
 Read first:
 
+- `docs/PRD-STANDARD.md`
+- `docs/PRD-PREMIUM-PREFLIGHT-SEATBELT.md`
 - `docs/AUTOCOMPACTION_POLICY_PRD.md`
 
 ## Scope
