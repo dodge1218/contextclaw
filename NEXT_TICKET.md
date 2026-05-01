@@ -1,57 +1,42 @@
-# NEXT_TICKET: Implement pure autocompaction policy MVP
+# NEXT_TICKET: Implement spend attribution ledger MVP
 
 ## Category
-🔴 CRITICAL, ContextClaw core direction.
+🔴 CRITICAL, ContextClaw maintainer proof artifact.
 
 ## Why
-Ryan identified the distilled ContextClaw primitive: a custom autocompaction policy that labels context as it enters, then reevaluates labels before every pass. This should replace ad hoc relevance scoring and prevent wrong-lane drift, e.g. stale bounty context staying hot after Ryan corrected back to websites.
+ContextClaw's strongest value is not only compaction. It should tell a vibe coder exactly where usage went by project, model/provider/auth profile, and subagent path. This supports private self-audit now and future sanitized metadata export later.
 
 ## Spec
 Read first:
 
 - `docs/PRD-STANDARD.md`
-- `docs/PRD-PREMIUM-PREFLIGHT-SEATBELT.md`
-- `docs/AUTOCOMPACTION_POLICY_PRD.md`
+- `docs/PRD-SPEND-ATTRIBUTION-LEDGER.md`
+- `docs/MAINTAINER_PROPOSAL.md`
 
 ## Scope
-Implement pure policy code first, with no OpenClaw plugin re-enable and no OpenClaw config mutation.
+Implement pure ledger/report helpers only.
 
-Add:
+Add/extend:
 
-- `plugin/autocompaction-policy.js`
-- `plugin/__tests__/autocompaction-policy.test.js`
-
-Export pure functions:
-
-- `labelContextItem(item, state)`
-- `resolveCurrentTaskState(items)`
-- `reevaluateLabels(labels, state)`
-- `planCompactionActions(labels, state)`
-- `assembleWorkingSet(items, actions, options)`
+- `plugin/ledger.js`
+- `plugin/__tests__/ledger.test.js`
 
 ## Required behaviors
 
-1. Ingress labels include: project, task, lane, contentType, source, tokenEstimate, importance, lifespan, privacy, costRisk, stale, summary, coldPointer.
-2. Detect correction events like:
-   - “no, we were actually doing websites”
-   - “bruh”
-   - “stop, wrong direction”
-3. On correction, mark conflicting lane labels stale and boost matching lane labels.
-4. Bulky file/tool/browser outputs become summary + cold pointer after their first useful turn.
-5. Secrets/config dumps are redacted from active working set.
-6. Current task status ledgers stay hot as summaries.
-
-## Acceptance tests
-
-- Wrong-lane correction test: bounty context becomes stale, website/Instant Cash context stays hot.
-- Bulky file lifecycle test: raw large file drops to summary + cold pointer.
-- Unresolved error test: failing current-task command stays hot as summarized error.
-- Secret-risk test: key-shaped values never appear in assembled output.
+1. Preserve optional attribution fields on estimate and receipt events:
+   - `projectId`
+   - `taskId`
+   - `authProfile`
+   - `artifactId`
+2. Summaries roll up by project and auth profile.
+3. Summaries expose parent/subagent/tool attribution.
+4. Add a local human-readable usage report formatter.
+5. Existing ledger tests keep passing.
 
 ## Constraints
 
-- No OpenClaw config edits.
-- No plugin registration changes.
-- No provider calls or embeddings for MVP.
-- Deterministic, fast, unit-testable.
-- Keep existing classifier/policy behavior intact unless explicitly replacing with tests.
+- No social layer.
+- No leaderboard.
+- No OpenClaw config changes.
+- No provider calls.
+- No runtime plugin registration changes.

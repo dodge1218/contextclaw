@@ -212,6 +212,10 @@ export class RequestLedger {
       agentId: params.agentId || null,
       runId: params.runId || null,
       missionId: params.missionId || null,
+      projectId: params.projectId || params.project || params.metadata?.projectId || null,
+      taskId: params.taskId || params.metadata?.taskId || null,
+      authProfile: params.authProfile || params.auth || params.metadata?.authProfile || null,
+      artifactId: params.artifactId || params.metadata?.artifactId || null,
       provider,
       model,
       providerModel: modelId,
@@ -272,6 +276,11 @@ export class RequestLedger {
       agentId: estimate?.agentId || params.agentId || null,
       runId: estimate?.runId || params.runId || null,
       missionId: estimate?.missionId || params.missionId || null,
+      projectId: estimate?.projectId || params.projectId || params.project || params.metadata?.projectId || null,
+      taskId: estimate?.taskId || params.taskId || params.metadata?.taskId || null,
+      authProfile: estimate?.authProfile || params.authProfile || params.auth || params.metadata?.authProfile || null,
+      artifactId: estimate?.artifactId || params.artifactId || params.metadata?.artifactId || null,
+      subagentOrToolName: estimate?.subagentOrToolName || params.subagentOrToolName || null,
       provider: pricingSnapshot.provider,
       model: pricingSnapshot.model,
       providerModel: pricingSnapshot.providerModel,
@@ -314,6 +323,8 @@ export function summarizeLedger(entries = [], options = {}) {
     if (sinceMs && new Date(entry.timestamp).getTime() < sinceMs) return false;
     if (options.sessionKey && entry.sessionKey !== options.sessionKey && entry.parentSessionKey !== options.sessionKey) return false;
     if (options.missionId && entry.missionId !== options.missionId) return false;
+    if (options.projectId && entry.projectId !== options.projectId) return false;
+    if (options.authProfile && entry.authProfile !== options.authProfile) return false;
     return true;
   });
   const summary = {
@@ -328,33 +339,46 @@ export function summarizeLedger(entries = [], options = {}) {
     actualOutputTokens: 0,
     byModel: {},
     bySessionKind: {},
+    byProject: {},
+    byAuthProfile: {},
+    bySubagentOrTool: {},
   };
   for (const entry of filtered) {
     const modelKey = entry.providerModel || `${entry.provider || 'unknown'}/${entry.model || 'unknown'}`;
     const sessionKind = entry.sessionKind || 'unknown';
+    const projectKey = entry.projectId || entry.missionId || 'unattributed';
+    const authKey = entry.authProfile || entry.pricingSnapshot?.source || 'unknown-auth';
+    const subagentKey = entry.subagentOrToolName || entry.childSessionKey || (entry.sessionKind === 'subagent' ? entry.sessionKey : null) || 'main';
     summary.byModel[modelKey] ||= { estimatedCostUsd: 0, actualCostUsd: 0, estimatedTokens: 0, actualTokens: 0, entries: 0 };
     summary.bySessionKind[sessionKind] ||= { estimatedCostUsd: 0, actualCostUsd: 0, entries: 0 };
-    summary.byModel[modelKey].entries++;
-    summary.bySessionKind[sessionKind].entries++;
+    summary.byProject[projectKey] ||= { estimatedCostUsd: 0, actualCostUsd: 0, estimatedTokens: 0, actualTokens: 0, entries: 0 };
+    summary.byAuthProfile[authKey] ||= { estimatedCostUsd: 0, actualCostUsd: 0, estimatedTokens: 0, actualTokens: 0, entries: 0 };
+    summary.bySubagentOrTool[subagentKey] ||= { estimatedCostUsd: 0, actualCostUsd: 0, estimatedTokens: 0, actualTokens: 0, entries: 0 };
+    const buckets = [summary.byModel[modelKey], summary.bySessionKind[sessionKind], summary.byProject[projectKey], summary.byAuthProfile[authKey], summary.bySubagentOrTool[subagentKey]];
+    for (const bucket of buckets) bucket.entries++;
 
     if (entry.event === 'receipt') {
       summary.receipts++;
       const actual = entry.actualCostUsd || 0;
       summary.actualCostUsd += actual;
-      summary.byModel[modelKey].actualCostUsd += actual;
-      summary.bySessionKind[sessionKind].actualCostUsd += actual;
+      const actualTokens = (entry.actualInputTokens || 0) + (entry.actualOutputTokens || 0);
+      for (const bucket of buckets) {
+        bucket.actualCostUsd += actual;
+        if ('actualTokens' in bucket) bucket.actualTokens += actualTokens;
+      }
       summary.actualInputTokens += entry.actualInputTokens || 0;
       summary.actualOutputTokens += entry.actualOutputTokens || 0;
-      summary.byModel[modelKey].actualTokens += (entry.actualInputTokens || 0) + (entry.actualOutputTokens || 0);
     } else {
       summary.estimates++;
       const estimated = entry.costEstimateUsd || 0;
       summary.estimatedCostUsd += estimated;
-      summary.byModel[modelKey].estimatedCostUsd += estimated;
-      summary.bySessionKind[sessionKind].estimatedCostUsd += estimated;
+      const estimatedTokens = (entry.estimatedInputTokens || 0) + (entry.estimatedOutputTokens || 0);
+      for (const bucket of buckets) {
+        bucket.estimatedCostUsd += estimated;
+        if ('estimatedTokens' in bucket) bucket.estimatedTokens += estimatedTokens;
+      }
       summary.estimatedInputTokens += entry.estimatedInputTokens || 0;
       summary.estimatedOutputTokens += entry.estimatedOutputTokens || 0;
-      summary.byModel[modelKey].estimatedTokens += (entry.estimatedInputTokens || 0) + (entry.estimatedOutputTokens || 0);
     }
   }
   return summary;
@@ -362,6 +386,48 @@ export function summarizeLedger(entries = [], options = {}) {
 
 export function readLedgerSummary(path = DEFAULT_LEDGER_PATH, options = {}) {
   return summarizeLedger(parseLedgerLines(expandHome(path)), options);
+}
+
+function topRows(bucket = {}, limit = 5) {
+  return Object.entries(bucket)
+    .sort(([, a], [, b]) => (b.actualCostUsd + b.estimatedCostUsd) - (a.actualCostUsd + a.estimatedCostUsd) || b.entries - a.entries)
+    .slice(0, limit);
+}
+
+function money(value = 0) {
+  return `$${Number(value || 0).toFixed(6)}`;
+}
+
+export function formatUsageReport(summary = {}, options = {}) {
+  const lines = [];
+  const title = options.title || 'ContextClaw usage report';
+  lines.push(`# ${title}`);
+  lines.push('');
+  lines.push(`Entries: ${summary.entries || 0} (${summary.estimates || 0} estimates, ${summary.receipts || 0} receipts)`);
+  lines.push(`Estimated: ${money(summary.estimatedCostUsd)} | Actual: ${money(summary.actualCostUsd)}`);
+  lines.push(`Estimated tokens: ${(summary.estimatedInputTokens || 0) + (summary.estimatedOutputTokens || 0)}`);
+  lines.push(`Actual tokens: ${(summary.actualInputTokens || 0) + (summary.actualOutputTokens || 0)}`);
+
+  const sections = [
+    ['Top projects', summary.byProject],
+    ['Top models', summary.byModel],
+    ['Top auth profiles', summary.byAuthProfile],
+    ['Top subagents/tools', summary.bySubagentOrTool],
+  ];
+  for (const [heading, bucket] of sections) {
+    lines.push('');
+    lines.push(`## ${heading}`);
+    const rows = topRows(bucket, options.limit || 5);
+    if (!rows.length) {
+      lines.push('- none');
+      continue;
+    }
+    for (const [key, value] of rows) {
+      const tokens = (value.estimatedTokens || 0) + (value.actualTokens || 0);
+      lines.push(`- ${key}: entries=${value.entries || 0}, est=${money(value.estimatedCostUsd)}, actual=${money(value.actualCostUsd)}, tokens=${tokens}`);
+    }
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 export function getPremiumPreflightDecision(entry, policy = {}) {

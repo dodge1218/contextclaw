@@ -10,6 +10,7 @@ import {
   estimateCostFromSnapshot,
   estimateCostUsd,
   formatReceipt,
+  formatUsageReport,
   getBudgetGateDecision,
   getPremiumPreflightDecision,
   hashValue,
@@ -250,6 +251,68 @@ test('premium preflight warns or blocks expensive non-final premium calls', () =
   });
   assert.equal(block.block, true);
   assert.equal(block.warn, false);
+});
+
+test('spend attribution rolls up by project auth profile and subagent path', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'contextclaw-ledger-'));
+  const ledger = new RequestLedger({
+    path: join(dir, 'ledger.jsonl'),
+    pricing: { 'anthropic/claude-opus-4-7': { input: 10, output: 20 } },
+  });
+  const estimate = ledger.recordEstimate({
+    modelId: 'anthropic/claude-opus-4-7',
+    projectId: 'contextclaw',
+    taskId: 'spend-ledger',
+    authProfile: 'anthropic-api-ryan',
+    artifactId: 'docs/PRD-SPEND-ATTRIBUTION-LEDGER.md',
+    sessionKey: 'agent:orchestrator:subagent:spend',
+    parentSessionKey: 'main:tui',
+    childSessionKey: 'agent:orchestrator:subagent:spend',
+    subagentOrToolName: 'ledger-worker',
+    messages: [{ role: 'user', content: 'produce final report' }],
+    estimatedInputTokens: 1000,
+    estimatedOutputTokens: 500,
+  });
+  ledger.recordReceipt({
+    estimateEntry: estimate,
+    actualInputTokens: 900,
+    actualOutputTokens: 400,
+  });
+
+  assert.equal(estimate.projectId, 'contextclaw');
+  assert.equal(estimate.taskId, 'spend-ledger');
+  assert.equal(estimate.authProfile, 'anthropic-api-ryan');
+  assert.equal(estimate.artifactId, 'docs/PRD-SPEND-ATTRIBUTION-LEDGER.md');
+
+  const summary = ledger.summarize({ projectId: 'contextclaw' });
+  assert.equal(summary.entries, 2);
+  assert.equal(summary.byProject.contextclaw.entries, 2);
+  assert.equal(summary.byAuthProfile['anthropic-api-ryan'].entries, 2);
+  assert.equal(summary.bySubagentOrTool['ledger-worker'].entries, 2);
+  assert.equal(summary.byModel['anthropic/claude-opus-4-7'].estimatedTokens, 1500);
+  assert.equal(summary.byModel['anthropic/claude-opus-4-7'].actualTokens, 1300);
+});
+
+test('formatUsageReport produces local self-audit text', () => {
+  const summary = summarizeLedger([
+    {
+      event: 'estimate',
+      timestamp: '2026-05-01T00:00:00.000Z',
+      providerModel: 'openai-codex/gpt-5.5',
+      projectId: 'openclaw-maintainer',
+      authProfile: 'copilot-pro-plus',
+      subagentOrToolName: 'coder',
+      sessionKind: 'subagent',
+      estimatedInputTokens: 100,
+      estimatedOutputTokens: 50,
+      costEstimateUsd: 0,
+    },
+  ]);
+  const report = formatUsageReport(summary, { title: 'Usage by project' });
+  assert.match(report, /# Usage by project/);
+  assert.match(report, /openclaw-maintainer/);
+  assert.match(report, /copilot-pro-plus/);
+  assert.match(report, /coder/);
 });
 
 test('inferSessionKind identifies subagent session keys', () => {
