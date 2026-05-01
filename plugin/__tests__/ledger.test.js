@@ -11,6 +11,7 @@ import {
   estimateCostUsd,
   formatReceipt,
   getBudgetGateDecision,
+  getPremiumPreflightDecision,
   hashValue,
   inferSessionKind,
   isPremiumModel,
@@ -222,6 +223,33 @@ test('budget gate is inert until enforcement is enabled', () => {
 
   assert.equal(decision.block, false);
   assert.deepEqual(decision.reasons, []);
+});
+
+test('premium preflight warns or blocks expensive non-final premium calls', () => {
+  const entry = {
+    providerModel: 'anthropic/claude-opus-4-7',
+    premiumDeferred: true,
+    estimatedInputTokens: 120000,
+    costEstimateUsd: 1,
+  };
+
+  const warn = getPremiumPreflightDecision(entry, {
+    warnPremiumUntilFinalPass: true,
+    premiumPreflightInputTokens: 32000,
+    premiumPreflightCostUsd: 0.15,
+  });
+  assert.equal(warn.block, false);
+  assert.equal(warn.warn, true);
+  assert.deepEqual(warn.reasons, ['premium-needs-preflight', 'premium-input-token-risk', 'premium-cost-risk']);
+
+  const block = getPremiumPreflightDecision(entry, {
+    warnPremiumUntilFinalPass: true,
+    enforcePremiumPreflight: true,
+    premiumPreflightInputTokens: 32000,
+    premiumPreflightCostUsd: 0.15,
+  });
+  assert.equal(block.block, true);
+  assert.equal(block.warn, false);
 });
 
 test('inferSessionKind identifies subagent session keys', () => {

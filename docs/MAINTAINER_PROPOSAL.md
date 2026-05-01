@@ -199,3 +199,18 @@ The main maintainer review areas are:
 - Whether critical plugin slot resolution should fail earlier and with clearer diagnostics.
 
 The goal is not to replace OpenClaw native compaction. The goal is to give OpenClaw a small, deterministic context-engine example that reduces dynamic context waste and exposes practical API improvements for plugin authors.
+
+## Premium Model Preflight Principle
+
+ContextClaw also formalizes a safety pattern for multi-model OpenClaw setups: raw human prompting should not blindly hit the most expensive model with the full hot session attached.
+
+The first implementation is intentionally modest. The ledger now exposes a pure `getPremiumPreflightDecision()` helper that can warn or block expensive non-final premium calls when they exceed token/cost thresholds or look like exploratory work. This is not a style constraint and does not force minimal output. It is a preflight warning/guardrail before provider execution.
+
+This is the product line between useful governance and harmful muzzling:
+
+- Good: prevent accidental Opus/GPT-5-class calls carrying stale giant context.
+- Good: require preflight for exploratory expensive calls.
+- Bad: force the premium model to answer in an opaque minimal style.
+- Bad: compress away task intent, evidence, blockers, or acceptance criteria.
+
+The policy should stay auditable: if ContextClaw warns or blocks, it should say exactly why.

@@ -364,6 +364,23 @@ export function readLedgerSummary(path = DEFAULT_LEDGER_PATH, options = {}) {
   return summarizeLedger(parseLedgerLines(expandHome(path)), options);
 }
 
+export function getPremiumPreflightDecision(entry, policy = {}) {
+  if (!entry) return { block: false, warn: false, reasons: [] };
+
+  const reasons = [];
+  const premium = isPremiumModel(entry.providerModel);
+  const requireFinalPass = policy.blockPremiumUntilFinalPass === true || policy.warnPremiumUntilFinalPass === true;
+  const highCost = entry.costEstimateUsd > (policy.premiumPreflightCostUsd ?? DEFAULT_MAX_ESTIMATED_COST_USD);
+  const highTokens = entry.estimatedInputTokens > (policy.premiumPreflightInputTokens ?? DEFAULT_MAX_ESTIMATED_INPUT_TOKENS);
+
+  if (premium && requireFinalPass && entry.premiumDeferred) reasons.push('premium-needs-preflight');
+  if (premium && highTokens) reasons.push('premium-input-token-risk');
+  if (premium && highCost) reasons.push('premium-cost-risk');
+
+  const shouldBlock = policy.enforcePremiumPreflight === true && reasons.length > 0;
+  return { block: shouldBlock, warn: !shouldBlock && reasons.length > 0, reasons };
+}
+
 export function getBudgetGateDecision(entry, policy = {}) {
   if (!entry) return { block: false, reasons: [] };
   const enforce = policy.enforce === true;
@@ -376,6 +393,7 @@ export function getBudgetGateDecision(entry, policy = {}) {
   if (entry.overCallBudget) reasons.push('over-call-budget');
   if (policy.blockDuplicateContexts !== false && entry.duplicateContext) reasons.push('duplicate-context');
   if (policy.blockPremiumUntilFinalPass === true && entry.premiumDeferred) reasons.push('premium-deferred');
+  if (policy.enforcePremiumPreflight === true) reasons.push(...getPremiumPreflightDecision(entry, policy).reasons);
   if (entry.estimatedInputTokens > maxEstimatedInputTokens) reasons.push('input-token-budget');
   if (entry.costEstimateUsd > maxEstimatedCostUsd) reasons.push('cost-budget');
 
