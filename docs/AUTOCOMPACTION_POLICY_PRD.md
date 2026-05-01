@@ -293,3 +293,15 @@ Policy:
 4. If Ryan asks for the old topic again, topic resolver flips lane/project and those cold pointers can be rehydrated.
 
 This intentionally favors low active-context burn over perfect recall.
+
+## Seatbelt doctrine link (added 2026-05-01)
+
+This policy implements the product doctrine captured in workspace memory:
+
+- `memory/permanent/contextclaw-seatbelt-doctrine.md`
+
+The short version:
+
+> “Why did 4 prompts eat $25?”
+
+ContextClaw should act as preflight control for premium model calls. It is allowed to compact stale/bulky/off-topic context aggressively, especially after topic switches, because Ryan expects to self-correct the rare case where old context is needed again. But it must remain a governor, not a muzzle: preserve enough task intent, evidence, blockers, constraints, and acceptance criteria that the premium model is not hamstrung or forced into opaque minimal-output behavior.

@@ -2,13 +2,17 @@
 
 [![CI](https://github.com/dodge1218/contextclaw/actions/workflows/ci.yml/badge.svg)](https://github.com/dodge1218/contextclaw/actions/workflows/ci.yml)
 
-**OpenClaw-first context + spend control plane.** ContextClaw makes agent work auditable: what context was sent, which model priced it, what price snapshot was active, whether it was main or subagent work, and how cost accumulates over time without repricing history against today’s API prices.
+**The seatbelt for agentic coding.** ContextClaw is an OpenClaw-first preflight, context, and spend control plane for expensive model calls. It answers the pain every power user eventually hits: “Why did 4 prompts eat $25?”
 
-ContextClaw is **not** an agent runtime, Claude Code clone, or LangChain roadmap. OpenClaw remains the runtime. ContextClaw is the governor: compression, request ledgers, budget gates, receipts, and TUI status.
+ContextClaw makes agent work auditable: what context was sent, which model priced it, what price snapshot was active, whether it was main or subagent work, and how cost accumulates over time without repricing history against today’s API prices.
+
+ContextClaw is **not** an agent runtime, Claude Code clone, or LangChain roadmap. OpenClaw remains the runtime. ContextClaw is the governor, not the muzzle: compression, request ledgers, budget gates, receipts, and TUI status without crippling the model’s useful output.
 
 See the current product definition: [`PRD-CONTROL-PLANE.md`](PRD-CONTROL-PLANE.md).
 
 ## Why this exists
+
+Vibe coders should not have to learn the hard way how wrappers, retries, context windows, prompt caching, and provider pricing interact. If you have multi-model routing, raw human prompting should not blindly hit your most expensive model with the whole hot session attached. A cheaper deterministic policy should preflight the prompt first.
 
 Agent systems hide spend in mutable prompts and subagent trees. A single “total tokens × current price” counter is not auditable because model prices change, cache tiers differ, and subagents run on different providers.
 

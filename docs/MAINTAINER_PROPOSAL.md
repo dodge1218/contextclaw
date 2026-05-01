@@ -2,7 +2,15 @@
 
 ## Executive Summary
 
-ContextClaw is an OpenClaw context-engine plugin that classifies transcript and tool-result content by type, then applies deterministic retention policies before the model call. It keeps recent conversation intact while truncating stale file reads, command output, config dumps, JSON/schema blobs, error traces, and media payloads that no longer need to remain verbatim in dynamic context.
+ContextClaw is the seatbelt for agentic coding: a model-agnostic preflight and context-governance layer for expensive model calls.
+
+The user-facing pain is simple: **“Why did 4 prompts eat $25?”** That happens when a long-running agent blindly sends stale file reads, giant command logs, browser snapshots, schemas, wrong-topic branches, and retry payloads to premium models. Most vibe coders do not know provider wrappers, retries, context windows, prompt caching, and pricing internals. They learn the hard way.
+
+ContextClaw’s rule is: **do not let raw human prompting hit the most expensive model ungoverned.** Let a cheap deterministic policy, and eventually a cheap model, prepare the prompt for the premium model first.
+
+It is a governor, not a muzzle. ContextClaw must reduce stale/bulky/off-topic context without forcing the premium model into a crippled minimal-output style or hiding what is going on. The goal is to preserve task intent, current evidence, blockers, constraints, and acceptance criteria while removing yesterday’s blast radius.
+
+Technically, ContextClaw is an OpenClaw context-engine plugin that classifies transcript and tool-result content by type, then applies deterministic retention policies before the model call. It keeps recent conversation intact while truncating stale file reads, command output, config dumps, JSON/schema blobs, error traces, and media payloads that no longer need to remain verbatim in dynamic context.
 
 This matters because long agent sessions accumulate large amounts of context that is technically valid but operationally stale. A file read that mattered one turn ago, a long command log where only the exit status and tail still matter, or a repeated config dump can continue consuming model input on every prompt. ContextClaw targets this dynamic middle: not static prompt caching, and not late-session summarization, but deterministic trimming during `assemble()`.
 
