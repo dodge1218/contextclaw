@@ -14,6 +14,7 @@
     "ledger": "npm run build && node packages/core/dist/cli.js ledger",
     "demo:mission-ledger": "bash prototypes/demo_mission_ledger.sh",
     "demo:mission-ledger:ts": "npm run build && node packages/core/dist/cli.js mission-demo",
+    "demo:control-plane": "node scripts/demo-control-plane-ledger.js",
     "mvp:help": "python3 prototypes/contextclaw_mvp.py --help",
     "test": "vitest run packages/core/src",
     "test:plugin": "cd plugin && node --test",

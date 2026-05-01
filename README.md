@@ -69,7 +69,10 @@ LangChain, CrewAI, AutoGen, Cline, and standalone runtime wrappers are intention
 npm test
 npm run test:plugin
 npm run ledger
+npm run demo:control-plane
 ```
+
+`demo:control-plane` creates a deterministic ledger with a main session, a premium subagent, a later main call after a price change, and an actual-usage receipt. The rollup proves ContextClaw sums entry-level price snapshots instead of repricing lifetime tokens against one current model price.
 
 The CLI is an audit/admin surface, not the product identity. The product is the ledger + budget control plane inside OpenClaw.
 
