@@ -151,6 +151,8 @@ export function labelContextItem(item, state = {}) {
     stale: Boolean(item?.stale),
     summary: item?.summary || summarize(text),
     coldPointer: item?.coldPointer,
+    offTopicSinceTurn: item?.offTopicSinceTurn,
+    offTopicPasses: item?.offTopicPasses ?? 0,
   };
 
   return label;
@@ -191,14 +193,18 @@ export function reevaluateLabels(labels = [], state = {}) {
     const matchesLane = effectiveState.lane && next.lane === effectiveState.lane;
     const matchesProject = effectiveState.project && next.project === effectiveState.project;
 
-    if (effectiveState.hasCorrection && (conflictsLane || conflictsProject)) {
+    if (conflictsLane || conflictsProject) {
       next.stale = true;
       next.importance = Math.max(0, next.importance - 1);
+      next.offTopicSinceTurn ??= effectiveState.turn;
+      next.offTopicPasses = (next.offTopicPasses ?? 0) + 1;
     }
 
-    if (effectiveState.hasCorrection && (matchesLane || matchesProject)) {
+    if (matchesLane || matchesProject) {
       next.stale = false;
-      next.importance = Math.min(5, next.importance + 2);
+      next.importance = Math.min(5, next.importance + (effectiveState.hasCorrection ? 2 : 1));
+      next.offTopicSinceTurn = undefined;
+      next.offTopicPasses = 0;
     }
 
     if (next.contentType === 'conversation-correction') {
@@ -223,7 +229,12 @@ export function planCompactionActions(labels = [], state = {}) {
     } else if (label.privacy === 'secret-risk' || label.privacy === 'credential') {
       action = ACTIONS.KEEP_SUMMARY;
     } else if (label.stale) {
-      action = label.summary || label.coldPointer ? ACTIONS.REHYDRATE_IF_ASKED : ACTIONS.DROP_FROM_WINDOW;
+      const gracePasses = state.offTopicGracePasses ?? 1;
+      if ((label.offTopicPasses ?? 0) <= gracePasses) {
+        action = label.summary || label.coldPointer ? ACTIONS.REHYDRATE_IF_ASKED : ACTIONS.DROP_FROM_WINDOW;
+      } else {
+        action = label.summary || label.coldPointer ? ACTIONS.COLD_STORE : ACTIONS.DROP_FROM_WINDOW;
+      }
     } else if (label.contentType === 'status-ledger') {
       action = ACTIONS.KEEP_SUMMARY;
     } else if (label.contentType === TYPES.ERROR_TRACE && label.resolved !== true) {
@@ -244,11 +255,11 @@ function redactSecrets(text) {
 
 function renderItem(item, label, action) {
   const raw = textOf(item);
-  if (action === ACTIONS.DROP_FROM_WINDOW) return null;
+  if (action === ACTIONS.DROP_FROM_WINDOW || action === ACTIONS.COLD_STORE) return null;
   if (action === ACTIONS.REHYDRATE_IF_ASKED) {
     return `[ContextClaw stale pointer] ${label.summary || label.contentType} (${coldPointerFor(label)})`;
   }
-  if (action === ACTIONS.KEEP_SUMMARY || action === ACTIONS.COLD_STORE) {
+  if (action === ACTIONS.KEEP_SUMMARY) {
     const summary = label.privacy === 'secret-risk'
       ? `${label.contentType} contained secret-risk content; raw value redacted. Source: ${label.source || 'unknown'}.`
       : (label.summary || summarize(raw));

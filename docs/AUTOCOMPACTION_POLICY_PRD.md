@@ -280,3 +280,16 @@ Implement the MVP inside ContextClaw as a pure policy module first, with no Open
   - `assembleWorkingSet(items, actions, options)`
 
 Only after tests pass should this be wired into the OpenClaw plugin assembly path.
+
+## Topic-switch decay policy (added 2026-05-01)
+
+Ryan preference: when the active topic switches, compact prior-topic context aggressively after a short grace period. Expected miss rate is acceptable: about 1/10 times Ryan will need old context again, and he is willing to self-correct in the prompt to rehydrate.
+
+Policy:
+
+1. If current lane/project differs from an item lane/project, mark item stale even without an explicit correction phrase.
+2. Keep stale/off-topic items as a lightweight `REHYDRATE_IF_ASKED` pointer for `offTopicGracePasses` passes, default `1`.
+3. After the grace pass, move the item fully out of the active window with `COLD_STORE`.
+4. If Ryan asks for the old topic again, topic resolver flips lane/project and those cold pointers can be rehydrated.
+
+This intentionally favors low active-context burn over perfect recall.

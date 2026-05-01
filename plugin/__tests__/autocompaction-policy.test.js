@@ -81,3 +81,27 @@ test('secret-risk values never appear in assembled output', () => {
   assert.match(workingSet, /secret-risk/);
   assert.doesNotMatch(workingSet, /re_1234567890abcdefghijklmnopqrstuvwxyz/);
 });
+
+test('topic switch keeps off-topic pointer for grace pass then compacts it out', () => {
+  const bounty = label({
+    id: 'bounty',
+    role: 'assistant',
+    content: 'Detailed bounty security research packet with Code4rena and Immunefi filing notes.',
+    lane: 'security-research',
+    project: 'bounty',
+  });
+  const websiteState = { lane: 'websites', project: 'dsb', turn: 10, offTopicGracePasses: 1 };
+
+  const firstPass = reevaluateLabels([bounty], websiteState)[0];
+  assert.equal(firstPass.stale, true);
+  assert.equal(firstPass.offTopicPasses, 1);
+  const firstActions = planCompactionActions([firstPass], websiteState);
+  assert.equal(firstActions.get('bounty'), ACTIONS.REHYDRATE_IF_ASKED);
+  assert.match(assembleWorkingSet([{ id: 'bounty', content: 'raw bounty details', _label: firstPass }], firstActions), /stale pointer/);
+
+  const secondPass = reevaluateLabels([firstPass], websiteState)[0];
+  assert.equal(secondPass.offTopicPasses, 2);
+  const secondActions = planCompactionActions([secondPass], websiteState);
+  assert.equal(secondActions.get('bounty'), ACTIONS.COLD_STORE);
+  assert.equal(assembleWorkingSet([{ id: 'bounty', content: 'raw bounty details', _label: secondPass }], secondActions), '');
+});
