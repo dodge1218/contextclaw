@@ -47,9 +47,9 @@ function setRuntimeUsage(usage) {
  * Uses real model pricing when available (via plugin runtime.usage API),
  * falls back to heuristic ($3/M tokens ≈ Sonnet-class pricing).
  */
-function estimateSavings(charsSaved, modelId, provider) {
+function estimateSavings(charsSaved, modelId, provider, authProfile = null) {
   const tokensSaved = Math.ceil(charsSaved / 4);
-  const resolved = resolveInputCostPerMillion({ modelId, provider });
+  const resolved = resolveInputCostPerMillion({ modelId, provider, authProfile });
   return {
     tokensSaved,
     savingsUsd: (tokensSaved * resolved.inputCostPerMillion) / 1_000_000,
@@ -66,10 +66,17 @@ function normalizeInputCostPerMillion(inputCost) {
   return inputCost < 0.01 ? inputCost * 1_000_000 : inputCost;
 }
 
-function resolveConfiguredModelCost({ modelId, provider }) {
+function resolveConfiguredModelCost({ modelId, provider, authProfile }) {
   try {
     const raw = readFileSync(join(homedir(), '.openclaw', 'openclaw.json'), 'utf8');
     const config = JSON.parse(raw);
+    const profilePricing = config?.contextclaw?.ledger?.pricingByAuthProfile?.[authProfile] ||
+      config?.plugins?.contextclaw?.ledger?.pricingByAuthProfile?.[authProfile] ||
+      null;
+    if (profilePricing) {
+      const profileMatch = profilePricing[modelId] || profilePricing.default;
+      if (profileMatch) return { ...profileMatch, _source: 'auth-profile-config' };
+    }
     const providerName = provider || modelId?.split('/')?.[0];
     const shortModel = modelId?.split('/')?.slice(1).join('/');
     const models = config?.models?.providers?.[providerName]?.models || [];
@@ -80,7 +87,7 @@ function resolveConfiguredModelCost({ modelId, provider }) {
   }
 }
 
-function resolveInputCostPerMillion({ modelId, provider }) {
+function resolveInputCostPerMillion({ modelId, provider, authProfile }) {
   if (_runtimeUsage && _runtimeUsage.resolveModelCostConfig) {
     try {
       const shortModel = modelId?.split('/')?.slice(1).join('/');
@@ -101,13 +108,14 @@ function resolveInputCostPerMillion({ modelId, provider }) {
     } catch { /* fall through to heuristic */ }
   }
 
-  const configuredCost = resolveConfiguredModelCost({ modelId, provider });
+  const configuredCost = resolveConfiguredModelCost({ modelId, provider, authProfile });
   const configuredInputCostPerMillion = normalizeInputCostPerMillion(configuredCost?.input);
   if (configuredInputCostPerMillion != null) {
     return {
-      source: 'openclaw-config',
+      source: configuredCost?._source || 'openclaw-config',
       modelId: modelId || 'unknown/unknown',
       provider: provider || modelId?.split('/')?.[0] || 'unknown',
+      authProfile: authProfile || null,
       inputCostPerMillion: configuredInputCostPerMillion,
       capturedAt: new Date().toISOString(),
     };
@@ -117,6 +125,7 @@ function resolveInputCostPerMillion({ modelId, provider }) {
     source: 'heuristic',
     modelId: modelId || 'unknown/unknown',
     provider: provider || modelId?.split('/')?.[0] || 'unknown',
+    authProfile: authProfile || null,
     inputCostPerMillion: HEURISTIC_COST_PER_MILLION,
     capturedAt: new Date().toISOString(),
   };
@@ -134,6 +143,7 @@ function loadLifetimeStats() {
       totalEstimatedLedgerSpendUsd: prev.ledgerSpendUsd || 0,
       totalEstimatedSubagentSpendUsd: prev.subagentSpendUsd || 0,
       savingsByModel: prev.savingsByModel || {},
+      savingsByAuthProfile: prev.savingsByAuthProfile || {},
       pricingSnapshots: prev.pricingSnapshots || {},
       byType: {},
     };
@@ -146,6 +156,7 @@ function loadLifetimeStats() {
       totalEstimatedLedgerSpendUsd: 0,
       totalEstimatedSubagentSpendUsd: 0,
       savingsByModel: {},
+      savingsByAuthProfile: {},
       pricingSnapshots: {},
       byType: {},
     };
@@ -244,6 +255,8 @@ const DEFAULT_CONFIG = {
     blockPremiumUntilFinalPass: false,
     estimatedOutputTokens: 2048,
     printReceipt: true,
+    authProfile: null,
+    pricingByAuthProfile: {},
   },
 };
 
@@ -369,7 +382,9 @@ class ContextClawEngine {
       path: this.config.ledger.path,
       maxCallsPerPrompt: this.config.ledger.maxCallsPerPrompt,
       defaultModel: this.config.activeModel,
+      authProfile: this.config.ledger.authProfile || this.config.authProfile || null,
       pricing: this.config.ledger.pricing || {},
+      pricingByAuthProfile: this.config.ledger.pricingByAuthProfile || {},
       runtimePricingResolver: _runtimeUsage?.resolveModelCostConfig?.bind(_runtimeUsage),
     }) : null;
     this._latestEstimateByRun = new Map();
@@ -528,6 +543,7 @@ class ContextClawEngine {
 
       const preliminarySavedChars = results.reduce((sum, r) => sum + (r.savedChars || 0), 0);
       const activeModel = this.config.activeModel || resolveConfiguredPrimaryModel();
+      const activeAuthProfile = this.config.ledger.authProfile || this.config.authProfile || null;
       const ledgerEntry = this.ledger?.recordEstimate({
         sessionId,
         sessionKey: sessionId,
@@ -539,6 +555,7 @@ class ContextClawEngine {
         missionId: this.config.missionId,
         messages: kept,
         modelId: activeModel,
+        authProfile: activeAuthProfile,
         estimatedInputTokens: estimatedTokens,
         estimatedOutputTokens: this.config.ledger.estimatedOutputTokens,
         compression: {
@@ -592,11 +609,12 @@ class ContextClawEngine {
       }
       if (totalSavedChars > 0) {
         const provider = activeModel?.split('/')?.[0];
-        const savings = estimateSavings(totalSavedChars, activeModel, provider);
+        const savings = estimateSavings(totalSavedChars, activeModel, provider, activeAuthProfile);
         turnSavingsUsd = savings.savingsUsd;
         stats.totalEstimatedSavingsUsd += turnSavingsUsd;
 
         const modelKey = savings.pricing.modelId;
+        const authKey = activeAuthProfile || savings.pricing.source || 'unknown-auth';
         const existing = stats.savingsByModel[modelKey] || {
           provider: savings.pricing.provider,
           modelId: modelKey,
@@ -621,6 +639,22 @@ class ContextClawEngine {
         if (existing.pricingSamples.length > 20) existing.pricingSamples = existing.pricingSamples.slice(-20);
         stats.savingsByModel[modelKey] = existing;
         stats.pricingSnapshots[modelKey] = savings.pricing;
+
+        const authExisting = stats.savingsByAuthProfile[authKey] || {
+          authProfile: authKey,
+          tokensSaved: 0,
+          charsSaved: 0,
+          savingsUsd: 0,
+          models: {},
+        };
+        authExisting.tokensSaved += savings.tokensSaved;
+        authExisting.charsSaved += totalSavedChars;
+        authExisting.savingsUsd += turnSavingsUsd;
+        authExisting.models[modelKey] ||= { tokensSaved: 0, charsSaved: 0, savingsUsd: 0 };
+        authExisting.models[modelKey].tokensSaved += savings.tokensSaved;
+        authExisting.models[modelKey].charsSaved += totalSavedChars;
+        authExisting.models[modelKey].savingsUsd += turnSavingsUsd;
+        stats.savingsByAuthProfile[authKey] = authExisting;
       }
 
       // Track efficiency data point
@@ -677,6 +711,7 @@ class ContextClawEngine {
           subagentSpendUsd: stats.totalEstimatedSubagentSpendUsd || 0,
           schemaVersion: STATS_SCHEMA_VERSION,
           savingsByModel: stats.savingsByModel,
+          savingsByAuthProfile: stats.savingsByAuthProfile,
           pricingSnapshots: stats.pricingSnapshots,
           usingRealPricing: !!_runtimeUsage,
           ts: Date.now(),

@@ -71,17 +71,26 @@ function normalizePerMillion(value) {
   return value > 0 && value < 0.01 ? value * 1_000_000 : value;
 }
 
-export function createPricingSnapshot({ modelId, pricing = {}, runtimePricing = null, source = null, capturedAt = new Date().toISOString() } = {}) {
+function resolveAuthPricing({ modelId, authProfile, pricingByAuthProfile = {} } = {}) {
+  if (!authProfile) return null;
+  const profile = pricingByAuthProfile[authProfile] || null;
+  if (!profile) return null;
+  return profile[modelId] || profile.default || null;
+}
+
+export function createPricingSnapshot({ modelId, authProfile = null, pricing = {}, pricingByAuthProfile = {}, runtimePricing = null, source = null, capturedAt = new Date().toISOString() } = {}) {
   const { provider, model } = splitProviderModel(modelId || 'unknown/unknown');
   const runtimeCost = runtimePricing || null;
-  const configured = pricing[modelId] || COST_PER_MILLION[modelId] || {};
+  const authConfigured = resolveAuthPricing({ modelId, authProfile, pricingByAuthProfile });
+  const configured = authConfigured || pricing[modelId] || COST_PER_MILLION[modelId] || {};
   const selected = runtimeCost || configured;
-  const selectedSource = source || (runtimeCost ? 'openclaw-runtime' : (pricing[modelId] ? 'configured' : (COST_PER_MILLION[modelId] ? 'builtin' : 'heuristic')));
+  const selectedSource = source || (runtimeCost ? 'openclaw-runtime' : (authConfigured ? 'auth-profile-configured' : (pricing[modelId] ? 'configured' : (COST_PER_MILLION[modelId] ? 'builtin' : 'heuristic'))));
   const snapshot = {
     source: selectedSource,
     provider,
     model,
     providerModel: modelId || 'unknown/unknown',
+    authProfile: authProfile || null,
     currency: 'USD',
     unit: 'per_1m_tokens',
     input: normalizePerMillion(selected.input ?? 0),
@@ -154,7 +163,9 @@ export class RequestLedger {
     this.legacyPath = expandHome(config.legacyPath || LEGACY_LEDGER_PATH);
     this.maxCallsPerPrompt = config.maxCallsPerPrompt ?? DEFAULT_MAX_CALLS_PER_PROMPT;
     this.defaultModel = config.defaultModel || 'unknown/unknown';
+    this.defaultAuthProfile = config.authProfile || config.defaultAuthProfile || null;
     this.pricing = config.pricing || {};
+    this.pricingByAuthProfile = config.pricingByAuthProfile || {};
     this.runtimePricingResolver = config.runtimePricingResolver || null;
     this.state = new Map();
   }
@@ -186,9 +197,12 @@ export class RequestLedger {
     const estimatedOutputTokens = params.estimatedOutputTokens || 0;
     const estimatedCacheReadTokens = params.estimatedCacheReadTokens || 0;
     const estimatedCacheWriteTokens = params.estimatedCacheWriteTokens || 0;
+    const authProfile = params.authProfile || params.auth || params.metadata?.authProfile || this.defaultAuthProfile || null;
     const pricingSnapshot = createPricingSnapshot({
       modelId,
+      authProfile,
       pricing: this.pricing,
+      pricingByAuthProfile: this.pricingByAuthProfile,
       runtimePricing: this.resolveRuntimePricing(modelId, provider, model),
     });
     const costEstimateUsd = estimateCostFromSnapshot(pricingSnapshot, {
@@ -214,7 +228,7 @@ export class RequestLedger {
       missionId: params.missionId || null,
       projectId: params.projectId || params.project || params.metadata?.projectId || null,
       taskId: params.taskId || params.metadata?.taskId || null,
-      authProfile: params.authProfile || params.auth || params.metadata?.authProfile || null,
+      authProfile,
       artifactId: params.artifactId || params.metadata?.artifactId || null,
       provider,
       model,
@@ -253,7 +267,9 @@ export class RequestLedger {
     const estimate = params.estimateEntry || null;
     const pricingSnapshot = estimate?.pricingSnapshot || createPricingSnapshot({
       modelId: params.modelId || this.defaultModel,
+      authProfile: params.authProfile || params.auth || params.metadata?.authProfile || this.defaultAuthProfile || null,
       pricing: this.pricing,
+      pricingByAuthProfile: this.pricingByAuthProfile,
     });
     const actualCostUsd = Number.isFinite(params.actualCostUsd)
       ? params.actualCostUsd

@@ -45,6 +45,31 @@ test('pricing snapshots preserve historical rates per entry', () => {
   assert.notEqual(oldSnapshot.configHash, newSnapshot.configHash);
 });
 
+test('auth profile pricing can price the same model differently per billing source', () => {
+  const copilotSnapshot = createPricingSnapshot({
+    modelId: 'openai-codex/gpt-5.5',
+    authProfile: 'copilot-pro-plus',
+    pricingByAuthProfile: {
+      'copilot-pro-plus': { default: { input: 0, output: 0 } },
+      'direct-openai-api': { 'openai-codex/gpt-5.5': { input: 4, output: 12 } },
+    },
+  });
+  const directSnapshot = createPricingSnapshot({
+    modelId: 'openai-codex/gpt-5.5',
+    authProfile: 'direct-openai-api',
+    pricingByAuthProfile: {
+      'copilot-pro-plus': { default: { input: 0, output: 0 } },
+      'direct-openai-api': { 'openai-codex/gpt-5.5': { input: 4, output: 12 } },
+    },
+  });
+
+  assert.equal(copilotSnapshot.source, 'auth-profile-configured');
+  assert.equal(copilotSnapshot.authProfile, 'copilot-pro-plus');
+  assert.equal(estimateCostFromSnapshot(copilotSnapshot, { inputTokens: 1_000_000 }), 0);
+  assert.equal(estimateCostFromSnapshot(directSnapshot, { inputTokens: 1_000_000 }), 4);
+  assert.notEqual(copilotSnapshot.configHash, directSnapshot.configHash);
+});
+
 test('RequestLedger writes auditable JSONL request estimates', () => {
   const dir = mkdtempSync(join(tmpdir(), 'contextclaw-ledger-'));
   const ledgerPath = join(dir, 'ledger.jsonl');
@@ -291,6 +316,39 @@ test('spend attribution rolls up by project auth profile and subagent path', () 
   assert.equal(summary.bySubagentOrTool['ledger-worker'].entries, 2);
   assert.equal(summary.byModel['anthropic/claude-opus-4-7'].estimatedTokens, 1500);
   assert.equal(summary.byModel['anthropic/claude-opus-4-7'].actualTokens, 1300);
+});
+
+test('RequestLedger estimate uses auth-profile-specific pricing override', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'contextclaw-ledger-'));
+  const ledger = new RequestLedger({
+    path: join(dir, 'ledger.jsonl'),
+    defaultModel: 'openai-codex/gpt-5.5',
+    pricingByAuthProfile: {
+      'copilot-pro-plus': { default: { input: 0, output: 0 } },
+      'direct-openai-api': { default: { input: 4, output: 12 } },
+    },
+  });
+
+  const copilot = ledger.recordEstimate({
+    authProfile: 'copilot-pro-plus',
+    messages: [{ role: 'user', content: 'final report' }],
+    estimatedInputTokens: 1_000_000,
+    estimatedOutputTokens: 100_000,
+  });
+  const direct = ledger.recordEstimate({
+    authProfile: 'direct-openai-api',
+    messages: [{ role: 'user', content: 'final report' }],
+    estimatedInputTokens: 1_000_000,
+    estimatedOutputTokens: 100_000,
+  });
+
+  assert.equal(copilot.costEstimateUsd, 0);
+  assert.equal(direct.costEstimateUsd, 5.2);
+  assert.equal(copilot.pricingSnapshot.authProfile, 'copilot-pro-plus');
+  assert.equal(direct.pricingSnapshot.authProfile, 'direct-openai-api');
+  const summary = ledger.summarize();
+  assert.equal(summary.byAuthProfile['copilot-pro-plus'].estimatedCostUsd, 0);
+  assert.equal(summary.byAuthProfile['direct-openai-api'].estimatedCostUsd, 5.2);
 });
 
 test('formatUsageReport produces local self-audit text', () => {

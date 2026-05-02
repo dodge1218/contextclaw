@@ -72,9 +72,19 @@
             "type": "boolean",
             "default": true
           },
+          "authProfile": {
+            "type": ["string", "null"],
+            "description": "Optional auth/billing profile label for provider-accurate attribution and pricing. Example: copilot-pro-plus or anthropic-api-ryan.",
+            "default": null
+          },
           "pricing": {
             "type": "object",
             "description": "Optional per-model pricing override in dollars per million tokens",
+            "additionalProperties": true
+          },
+          "pricingByAuthProfile": {
+            "type": "object",
+            "description": "Optional per-auth-profile pricing overrides. Shape: { profile: { provider/model: { input, output, cacheRead, cacheWrite }, default: {...} } }",
             "additionalProperties": true
           }
         },
