@@ -21,8 +21,8 @@ Status after local cleanup:
 - The batch stayed in one repeated single-codebase workflow, not a multitask/sticker demo.
 - Adjacent external validation exists from Eric Milgram, PhD (`ScientificProgrammer`) on OpenClaw PR #64127: his real OpenClaw deployment hit a provider quota cascade that matched the control-plane/circuit-breaker framing.
 - Local tests pass:
-  - core: 60/60
-  - plugin: 78/78
+  - core: 51/51
+  - plugin: 54/54
   - `git diff --check`: clean
 
 ## Current Dogfood Batch

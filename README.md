@@ -163,8 +163,8 @@ git diff --check
 
 Current local result from this checkout:
 
-- core tests: 60 passed
-- plugin tests: 78 passed
+- core tests: 51 passed
+- plugin tests: 54 passed
 - whitespace diff check: clean
 
 ## Doctrine
