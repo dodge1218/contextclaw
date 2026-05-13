@@ -116,6 +116,33 @@ Do not lead with these in the first maintainer review:
 - old HN launch claims
 - large universal context-engine vision
 
+## PR #7 Scope Guardrail
+
+Do not add new product scope to PR #7 while it is waiting for maintainer review.
+
+Keep PR #7 limited to:
+
+- OpenClaw `contextEngine` plugin shape;
+- deterministic preflight trimming;
+- cold storage;
+- receipts/request ledger;
+- one OpenClaw-native dogfood packet;
+- measurement caveats;
+- safety hardening and tests.
+
+Do not add:
+
+- Claude Code adapter work;
+- Codex CLI streaming toggles;
+- `/on`, `/off`, `/stream-on`, or `/stream-off` controls;
+- sticker/task routing;
+- multi-agent shared context;
+- auto-rehydration;
+- broad benchmark claims;
+- founder-market framing such as platform-scale savings.
+
+Those belong in separate future branches after PR #7 gets human feedback. The maintainer ask should stay one concrete question: does this `contextEngine` preflight shape fit OpenClaw, and what runtime/API changes would make it safer?
+
 ## Deferred Integration Idea: Manual Claude Code / Codex Surfaces
 
 Do not mix this into the first OpenClaw maintainer packet.
