@@ -4,16 +4,22 @@
   "type": "module",
   "main": "index.js",
   "openclaw": {
-    "extensions": ["./index.js"],
+    "extensions": [
+      "./index.js"
+    ],
     "compat": {
       "pluginApi": ">=2026.3.24-beta.2",
       "minGatewayVersion": "2026.3.24-beta.2"
     }
   },
   "pi": {
-    "extensions": ["./index.js"]
+    "extensions": [
+      "./index.js"
+    ]
   },
   "dependencies": {
+    "openclaw": "^2026.5.7",
+    "tiktoken": "^1.0.22",
     "ws": "^8.20.0"
   },
   "scripts": {

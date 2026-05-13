@@ -10,9 +10,7 @@ jobs:
           node-version: 22
       - name: Install plugin deps
         run: cd plugin && npm ci
-      - name: Install tiktoken for core engine
-        run: cd plugin && npm install tiktoken
-      - name: Run plugin tests (36 tests)
+      - name: Run plugin tests (54 tests)
         run: cd plugin && node --test
 
   core-tests:
@@ -26,5 +24,5 @@ jobs:
         run: npm ci
       - name: Build core
         run: cd packages/core && npx tsc
-      - name: Run core tests (30 tests)
+      - name: Run core tests (51 tests)
         run: cd packages/core && npx vitest run
