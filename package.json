@@ -11,9 +11,9 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "inspect": "node dist/inspector/server.js",
-    "test": "vitest run",
+    "test": "vitest run packages/core/src",
     "test:plugin": "cd plugin && node --test",
-    "test:all": "vitest run && cd plugin && node --test"
+    "test:all": "vitest run packages/core/src && cd plugin && node --test"
   },
   "keywords": [
     "openclaw",
