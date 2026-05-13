@@ -1,4 +1,3 @@
-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  dogfood-runs/2026-05-12-proceed-loop/SHA256SUMS.after
-7d432624d5040c485663ed0f9268bbe3e7e7648c42485aa722d11ce8e5a48dc4  dogfood-runs/2026-05-12-proceed-loop/efficiency-after.json
-73ef5bf42df383d0aedaeec08098969936f776dd0149bb45b49b1fe403930b12  dogfood-runs/2026-05-12-proceed-loop/ledger-after.jsonl
-fdd6c8a63f2fd28e6e30446d60459a90e3c5c61257221ab7b809cc0e51830856  dogfood-runs/2026-05-12-proceed-loop/stats-after.json
+7d432624d5040c485663ed0f9268bbe3e7e7648c42485aa722d11ce8e5a48dc4  efficiency-after.json
+73ef5bf42df383d0aedaeec08098969936f776dd0149bb45b49b1fe403930b12  ledger-after.jsonl
+fdd6c8a63f2fd28e6e30446d60459a90e3c5c61257221ab7b809cc0e51830856  stats-after.json

@@ -37,7 +37,7 @@ ContextClaw was enabled in `~/.openclaw/openclaw.json`:
 The plugin load path pointed at the local checkout:
 
 ```text
-/home/yin/.openclaw/workspace/contextclaw/plugin
+<OPENCLAW_WORKSPACE>/contextclaw/plugin
 ```
 
 Backup created before config edit:

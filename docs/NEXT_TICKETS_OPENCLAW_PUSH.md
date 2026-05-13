@@ -44,7 +44,10 @@ Create `docs/openclaw-dogfood-2026-05-12.md` with:
 
 - setup/config
 - restart note
-- session key(s)
+- hashed/redacted session identifier(s), never raw session keys
+  - Use SHA-256 over the raw session key plus a local, unpublished evidence pepper.
+  - Publish as `session:sha256:<first12>`; keep the pepper local so outside readers can compare entries inside one packet without recovering the original session key.
+  - Document the command or script used to derive the redacted ID in the evidence packet.
 - per-call ledger rows
 - chars saved
 - truncation counts

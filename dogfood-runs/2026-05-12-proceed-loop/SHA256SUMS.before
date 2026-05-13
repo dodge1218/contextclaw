@@ -1,4 +1,4 @@
-5558ce85784d7b659ab1ab128b048af1622d72f613185b305f6b40ef53668934  /home/yin/.openclaw/workspace/contextclaw/dogfood-runs/2026-05-12-proceed-loop/efficiency-before.json
-9e3c55cddc7d043535dd20e847945fa3fd89ef869ae143c2846f0e1f056fcaea  /home/yin/.openclaw/workspace/contextclaw/dogfood-runs/2026-05-12-proceed-loop/ledger-before.jsonl
-eeed5db659d113911d777ddd14e69f40cd7decb564cd91452090088466a5b5d1  /home/yin/.openclaw/workspace/contextclaw/dogfood-runs/2026-05-12-proceed-loop/start.txt
-0aef150ba84752fb5ae3a55401d36303499cd0b63cf8e13ee96846ec6f24894a  /home/yin/.openclaw/workspace/contextclaw/dogfood-runs/2026-05-12-proceed-loop/stats-before.json
+5558ce85784d7b659ab1ab128b048af1622d72f613185b305f6b40ef53668934  efficiency-before.json
+9e3c55cddc7d043535dd20e847945fa3fd89ef869ae143c2846f0e1f056fcaea  ledger-before.jsonl
+eeed5db659d113911d777ddd14e69f40cd7decb564cd91452090088466a5b5d1  start.txt
+0aef150ba84752fb5ae3a55401d36303499cd0b63cf8e13ee96846ec6f24894a  stats-before.json

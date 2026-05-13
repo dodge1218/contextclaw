@@ -7,10 +7,10 @@ Status: working doctrine, consolidated from prior memory
 
 This is not a new doctrine. It consolidates the existing ContextClaw scope-creep / future-work notes into one maintainer-readable frame:
 
-- `/home/yin/.openclaw/workspace/memory/permanent/contextclaw-v2-vision.md`
-- `/home/yin/.openclaw/workspace/memory/permanent/contextclaw-seatbelt-doctrine.md`
-- `/home/yin/.openclaw/workspace/memory/permanent/contextclaw-spend-ledger-doctrine.md`
-- `/home/yin/.openclaw/workspace/outputs/openclaw-recovery-todo-20260418.md`
+- `<OPENCLAW_WORKSPACE>/memory/permanent/contextclaw-v2-vision.md`
+- `<OPENCLAW_WORKSPACE>/memory/permanent/contextclaw-seatbelt-doctrine.md`
+- `<OPENCLAW_WORKSPACE>/memory/permanent/contextclaw-spend-ledger-doctrine.md`
+- `<OPENCLAW_WORKSPACE>/outputs/openclaw-recovery-todo-20260418.md`
 
 Those older notes already had the pieces:
 
@@ -97,7 +97,7 @@ That is why the phrase "agent loop" can hide the actual problem. The loop is not
 Eric Milgram, PhD (`ScientificProgrammer`) gave a clean external example on OpenClaw PR #64127:
 
 - Google Gemini billing account hit a monthly spending cap.
-- The gateway produced 26 distinct runIds across a 7-day window.
+- The gateway produced 26 distinct run IDs across a 7-day window.
 - Each run repeated the same failover ladder.
 - The cascade generated about 390 `RESOURCE_EXHAUSTED` events from one billing condition.
 - The missing primitive was host-level memory that this provider/account condition was non-transient.

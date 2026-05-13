@@ -52,7 +52,7 @@ Relevant artifact:
 What it validates:
 
 - The broader control-plane thesis is real: OpenClaw can repeat expensive failure loops when a provider/account condition is non-transient.
-- His incident produced 26 runIds over about 7 days, repeating the same failover ladder and generating about 390 `RESOURCE_EXHAUSTED` events from one billing condition.
+- His incident produced 26 run IDs over about 7 days, repeating the same failover ladder and generating about 390 `RESOURCE_EXHAUSTED` events from one billing condition.
 - He explicitly said the PR framing was "exactly the missing piece" for a real deployment he diagnosed.
 
 What it does not validate:

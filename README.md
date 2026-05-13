@@ -119,8 +119,10 @@ Path-based plugin setup:
 
 ```bash
 cd ~/.openclaw/workspace/contextclaw/plugin
-npm install
+npm ci
 ```
+
+Use `npm ci` when the lockfile is present so local setup matches CI.
 
 Representative OpenClaw config shape:
 
