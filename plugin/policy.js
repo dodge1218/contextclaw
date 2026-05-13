@@ -9,12 +9,67 @@
  * No relevance scoring. Just: what type is it, how old is it, how big is it.
  */
 
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { TYPES } from './classifier.js';
 
+// Session-scoped HMAC key; regenerated per process. Attacker-supplied
+// content from prior sessions cannot forge a marker that verifies against
+// the current key.
+const SESSION_KEY = randomBytes(32);
+
+// Recognized marker pattern (bounded, no backtracking). Matches the format
+// produced by `formatTruncationMarker` and `formatTruncationMarkerHmac`.
+const MARKER_REGEX = /\[ContextClaw:([0-9a-f]{8,16})[ \t][^\]]{1,256}\]/;
+
+/**
+ * Whitelist+truncate a string before embedding it in a marker. Strips
+ * shell metacharacters, control characters, and brackets so the
+ * downstream marker pattern stays unambiguous and cannot be hijacked by
+ * attacker-supplied newlines or `]` characters that close the wrapper early.
+ */
+function sanitizeMarkerText(input, maxLen = 80) {
+  if (input === null || input === undefined) return '';
+  let s = String(input);
+  s = s.replace(/[\r\n\t\0]/g, ' ');
+  s = s.replace(/[`$();&|<>"'\[\]]/g, '');
+  s = s.replace(/\s+/g, ' ').trim();
+  if (s.length > maxLen) s = s.slice(0, maxLen);
+  return s;
+}
+
+/**
+ * Build a session-bound truncation marker. The 8-hex tag is an HMAC of the
+ * sanitized message under the per-session key — attacker-supplied content
+ * cannot predict the tag without the key, so spoofed markers won't verify.
+ */
 function formatTruncationMarker(message) {
-  const nonce = randomBytes(4).toString('hex');
-  return `[ContextClaw:${nonce} ${message} (Run cc_rehydrate("${nonce}") to read full)]`;
+  const safeMessage = sanitizeMarkerText(message);
+  const tag = createHmac('sha256', SESSION_KEY)
+    .update(safeMessage)
+    .digest('hex')
+    .slice(0, 8);
+  return `[ContextClaw:${tag} ${safeMessage} (Run cc_rehydrate("${tag}") to read full)]`;
+}
+
+/**
+ * Verify a marker came from THIS engine session by recomputing the HMAC.
+ * Returns true only if the marker's tag matches the HMAC of its message
+ * payload under the session key. Attacker-supplied markers from chat
+ * content will have predictable tags that don't verify.
+ */
+export function verifyTruncationMarker(text) {
+  if (typeof text !== 'string') return false;
+  const m = text.match(MARKER_REGEX);
+  if (!m) return false;
+  const tag = m[1].slice(0, 8);
+  // Extract the message payload between the tag and ` (Run cc_rehydrate`
+  const inner = m[0].slice(`[ContextClaw:${tag} `.length, m[0].lastIndexOf(' (Run cc_rehydrate'));
+  if (!inner) return false;
+  const expected = createHmac('sha256', SESSION_KEY)
+    .update(inner)
+    .digest('hex')
+    .slice(0, 8);
+  return tag === expected;
 }
 
 // -------------------------------------------------------
@@ -142,13 +197,39 @@ function extractTail(content, tailLines = 20) {
   return `${marker}\n${kept.join('\n')}`;
 }
 
+/**
+ * Sanitize a pointer extracted from untrusted content.
+ *
+ * The pointer becomes part of a hint surfaced to the model. A bad pointer
+ * (path traversal sentinels, shell metacharacters, embedded markers) can
+ * mislead the model into asking for a file the operator did not intend
+ * to expose, or be read by downstream consumers that strip-quote and
+ * re-execute. Apply the same whitelist / basename / length-cap rules used
+ * elsewhere so the pointer can only be a flat short filename.
+ */
+function sanitizePointerSegment(input, maxLen = 80) {
+  if (input === null || input === undefined) return 'unknown';
+  let s = String(input);
+  // Take only the basename — drop any directory component
+  const lastSlash = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+  if (lastSlash >= 0) s = s.slice(lastSlash + 1);
+  // Drop shell metacharacters, control chars, and brackets
+  s = s.replace(/[`$();&|<>"'\[\]\r\n\t\0]/g, '');
+  // Whitelist
+  s = s.replace(/[^A-Za-z0-9._\- ]/g, '_');
+  s = s.trim();
+  if (!s || s === '.' || s === '..') return 'unknown';
+  if (s.length > maxLen) s = s.slice(0, maxLen);
+  return s;
+}
+
 function extractPointer(content) {
   // Try to find a filename or media reference
   const fileMatch = content.match(/\/([\w.-]+\.(?:jpg|jpeg|png|gif|webp|svg|pdf|mp4|mp3))/i);
-  if (fileMatch) return formatTruncationMarker(`media pointer: ${fileMatch[1]}`);
+  if (fileMatch) return formatTruncationMarker(`media pointer: ${sanitizePointerSegment(fileMatch[1])}`);
 
   const mediaMatch = content.match(/MEDIA:([\S]+)/);
-  if (mediaMatch) return formatTruncationMarker(`media pointer: ${mediaMatch[1]}`);
+  if (mediaMatch) return formatTruncationMarker(`media pointer: ${sanitizePointerSegment(mediaMatch[1])}`);
 
   return formatTruncationMarker(`media attachment — ${content.length} chars, binary dropped`);
 }

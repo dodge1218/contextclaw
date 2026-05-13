@@ -1,6 +1,7 @@
 import { writeFile, mkdir, readFile, readdir, stat, unlink } from 'fs/promises';
 import { join } from 'path';
 import type { ContextBlock } from './types.js';
+import { buildSafeColdPath, redactPaths, sanitizeSegment } from './path-safety.js';
 
 export class MemoryStore {
   private dir: string;
@@ -18,13 +19,16 @@ export class MemoryStore {
   }
 
   async flush(block: ContextBlock): Promise<string | null> {
+    const safeId = sanitizeSegment(block.id);
     try {
       await this.init();
-      const filename = `evicted-${block.id}-${Date.now()}.md`;
-      const path = join(this.dir, filename);
+      // Sanitize+resolve to defeat path traversal via attacker-influenced
+      // block.id (e.g. "../../etc/passwd") and add per-flush nonce so two
+      // concurrent same-ms flushes can't collide.
+      const path = buildSafeColdPath(this.dir, 'evicted', block.id, 'md');
       const content = [
         `# Evicted Context Block`,
-        `- ID: ${block.id}`,
+        `- ID: ${safeId}`,
         `- Type: ${block.type}`,
         `- Source: ${block.source || 'unknown'}`,
         `- Score: ${block.score}`,
@@ -36,13 +40,13 @@ export class MemoryStore {
       ].join('\n');
 
       await writeFile(path, content, 'utf-8');
-      
+
       // Rotate old evicted files to prevent unbounded accumulation
       await this.rotate();
-      
+
       return path;
     } catch (err) {
-      console.error(`[ContextClaw] Failed to flush block ${block.id}:`, err);
+      console.error(`[ContextClaw] Failed to flush block ${safeId}: ${redactPaths(err)}`);
       return null;
     }
   }

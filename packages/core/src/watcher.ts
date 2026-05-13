@@ -16,6 +16,17 @@ import { createInterface } from 'readline';
 import { countTokens } from './budget.js';
 import { streamJsonl } from './jsonl-reader.js';
 import { generateTruncationMarker } from './markers.js';
+import { buildSafeColdPath, redactPaths } from './path-safety.js';
+
+/**
+ * DoS guard: refuse to parse any session JSONL above this size unless the
+ * caller explicitly opts in via WatcherConfig.allowLargeSession. The async
+ * streamer is bounded by line-iteration so OOM is not a realistic risk,
+ * but the upper bound prevents a malicious session file from dominating
+ * the process for arbitrary wall-clock time.
+ */
+const DEFAULT_MAX_SESSION_BYTES = 500 * 1024 * 1024;
+const DEFAULT_PARSE_TIMEOUT_MS = 30_000;
 
 export interface WatcherConfig {
   /** Token threshold before triggering compaction advisory */
@@ -28,6 +39,14 @@ export interface WatcherConfig {
   toolResultMaxTokens: number;
   /** Poll interval in ms (fallback if fs.watch doesn't fire) */
   pollIntervalMs: number;
+  /** Hard byte ceiling for session files; parses above this are rejected
+   *  unless `allowLargeSession` is true. Default 500MB. */
+  maxSessionBytes?: number;
+  /** Opt-in: allow parsing session JSONL above `maxSessionBytes`.
+   *  Defaults to false. */
+  allowLargeSession?: boolean;
+  /** Per-parse abort timeout (ms). Default 30s. */
+  parseTimeoutMs?: number;
 }
 
 const DEFAULT_CONFIG: WatcherConfig = {
@@ -36,6 +55,9 @@ const DEFAULT_CONFIG: WatcherConfig = {
   coldStorageDir: join(homedir(), '.openclaw', 'workspace', 'memory', 'cold'),
   toolResultMaxTokens: 2000,
   pollIntervalMs: 5000,
+  maxSessionBytes: DEFAULT_MAX_SESSION_BYTES,
+  allowLargeSession: false,
+  parseTimeoutMs: DEFAULT_PARSE_TIMEOUT_MS,
 };
 
 interface SessionTurn {
@@ -93,11 +115,37 @@ export class SessionWatcher {
 
   /**
    * Parse a session JSONL via streaming to avoid OOM on large files.
-   * Falls back to sync read for small files (<1MB) for speed.
+   * Default async path; sync fast-path is intentionally absent.
+   *
+   * DoS guards:
+   *  - Reject files larger than `maxSessionBytes` unless `allowLargeSession`.
+   *  - Abort iteration after `parseTimeoutMs` (default 30s) regardless of size.
    */
   async parseSessionAsync(filePath: string): Promise<SessionTurn[]> {
     const turns: SessionTurn[] = [];
+    const limit = this.config.maxSessionBytes ?? DEFAULT_MAX_SESSION_BYTES;
+    const allowLarge = this.config.allowLargeSession === true;
+    try {
+      const st = statSync(filePath);
+      if (!allowLarge && st.size > limit) {
+        throw new Error(
+          `ContextClaw: refused session parse — size ${st.size} exceeds limit ${limit} (allowLargeSession=false)`,
+        );
+      }
+    } catch (err) {
+      // statSync errors (ENOENT, EACCES) bubble up so callers see them.
+      if ((err as NodeJS.ErrnoException)?.code) throw err;
+      throw err;
+    }
+
+    const timeoutMs = this.config.parseTimeoutMs ?? DEFAULT_PARSE_TIMEOUT_MS;
+    const deadline = Date.now() + timeoutMs;
     for await (const entry of streamJsonl(filePath)) {
+      if (Date.now() > deadline) {
+        throw new Error(
+          `ContextClaw: session parse exceeded ${timeoutMs}ms — aborted to prevent DoS`,
+        );
+      }
       const turn = this._entryToTurn(entry);
       if (turn) turns.push(turn);
     }
@@ -267,12 +315,15 @@ export class SessionWatcher {
 
   /**
    * Flush content to cold storage directory.
+   *
+   * The `label` parameter is sanitized + assertion-anchored to the cold
+   * storage dir to defeat path traversal (e.g. label="../../etc/passwd").
+   * A 32-bit nonce defeats millisecond-collision overwrites under
+   * concurrent flushes.
    */
   async flushToColdStorage(content: string, label: string): Promise<string> {
     await mkdir(this.config.coldStorageDir, { recursive: true });
-    const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `${label}-${ts}.md`;
-    const path = join(this.config.coldStorageDir, filename);
+    const path = buildSafeColdPath(this.config.coldStorageDir, 'cold', label, 'md');
     await writeFile(path, content, 'utf-8');
     return path;
   }
@@ -414,7 +465,7 @@ export class SessionWatcher {
         if (err?.message?.includes('Unexpected end of JSON input')) {
           carry = line;
         } else {
-          console.warn('[ContextClaw] Skipping malformed session line:', err?.message ?? err);
+          console.warn('[ContextClaw] Skipping malformed session line:', redactPaths(err));
         }
       }
     }

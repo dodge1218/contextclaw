@@ -8,8 +8,9 @@
  */
 
 import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
+import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { get_encoding } from 'tiktoken';
 import { classifyAll, TYPES } from './classifier.js';
@@ -152,6 +153,37 @@ const DEFAULT_CONFIG = {
 // Cold storage — flush truncated/evicted items to disk
 // -------------------------------------------------------
 
+// Whitelist filename charset to defeat path traversal in user-influenced
+// segments (sessionId may originate from outside the engine).
+function _sanitizeIdSegment(input, maxLen = 64) {
+  if (input === null || input === undefined) return 'unknown';
+  let s = String(input);
+  s = s.replace(/[/\\]/g, '_');
+  s = s.replace(/[^A-Za-z0-9._-]/g, '_');
+  s = s.replace(/^\.+/, '_');
+  if (!s) return 'unknown';
+  if (s.length > maxLen) s = s.slice(0, maxLen);
+  return s;
+}
+
+// Redact home dir + absolute paths from text before logging it. Caps the
+// information leakage from console.error of raw Error objects (Finding 8).
+function _redactPaths(input) {
+  if (input === null || input === undefined) return '';
+  let s;
+  if (input instanceof Error) s = input.message ?? String(input);
+  else if (typeof input === 'string') s = input;
+  else { try { s = String(input); } catch { return '<unprintable>'; } }
+  const home = homedir();
+  if (home && home.length > 1) {
+    const escapedHome = home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    s = s.replace(new RegExp(escapedHome, 'g'), '<home>');
+  }
+  s = s.replace(/\/(?:[A-Za-z0-9._-]{1,128}\/){1,32}[A-Za-z0-9._-]{0,128}/g, '<abs-path>');
+  s = s.replace(/[A-Za-z]:\\(?:[A-Za-z0-9._-]{1,128}\\){1,32}[A-Za-z0-9._-]{0,128}/g, '<abs-path>');
+  return s;
+}
+
 function flushToCold(sessionId, items, coldDir) {
   if (!items.length) return;
   setImmediate(() => {
@@ -161,20 +193,37 @@ function flushToCold(sessionId, items, coldDir) {
         : coldDir;
       mkdirSync(expandedDir, { recursive: true });
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      const sid = (sessionId || 'unknown').slice(0, 8);
-      const file = join(expandedDir, `${sid}-${ts}.jsonl`);
-      const lines = items.map(item => JSON.stringify({
-        role: item.msg.role,
-        type: item.msg._type,
-        timestamp: item.msg.timestamp || new Date().toISOString(),
-        originalChars: item.originalChars,
-        action: item.action,
-        content: item.originalContent || (typeof item.msg.content === 'string' ? item.msg.content : JSON.stringify(item.msg.content || '')),
-        nonce: item.msg._truncated ? (typeof item.msg.content === 'string' ? item.msg.content : JSON.stringify(item.msg.content || '')).match(/ContextClaw:([a-f0-9]{8})/) ? (typeof item.msg.content === 'string' ? item.msg.content : JSON.stringify(item.msg.content || '')).match(/ContextClaw:([a-f0-9]{8})/)[1] : null : null,
-      }));
+      // Sanitize sessionId (defeat traversal) AND append a 32-bit nonce
+      // (defeat ms-collision under concurrent flushes — Finding 7).
+      const sid = _sanitizeIdSegment(sessionId).slice(0, 8) || 'unknown';
+      const nonce = randomBytes(4).toString('hex');
+      const filename = `${sid}-${ts}-${nonce}.jsonl`;
+      const file = resolve(expandedDir, filename);
+      // Belt-and-braces: assert resolved file is a child of the cold dir.
+      const resolvedDir = resolve(expandedDir);
+      if (file !== resolvedDir && !file.startsWith(resolvedDir + sep)) {
+        throw new Error('ContextClaw: refused unsafe cold-storage path');
+      }
+      const lines = items.map(item => {
+        const flatContent = typeof item.msg.content === 'string'
+          ? item.msg.content
+          : JSON.stringify(item.msg.content || '');
+        const nonceMatch = item.msg._truncated
+          ? flatContent.match(/ContextClaw:([a-f0-9]{8})/)
+          : null;
+        return JSON.stringify({
+          role: item.msg.role,
+          type: item.msg._type,
+          timestamp: item.msg.timestamp || new Date().toISOString(),
+          originalChars: item.originalChars,
+          action: item.action,
+          content: item.originalContent || flatContent,
+          nonce: nonceMatch ? nonceMatch[1] : null,
+        });
+      });
       writeFileSync(file, lines.join('\n') + '\n');
     } catch (e) {
-      console.error('[ContextClaw] cold storage flush failed:', e.message);
+      console.error('[ContextClaw] cold storage flush failed:', _redactPaths(e));
     }
   });
 }
@@ -225,7 +274,7 @@ class ContextClawEngine {
         if (e.code === 'EADDRINUSE') {
           console.warn(`[ContextClaw] WS port ${this.config.wsPort} in use — telemetry disabled (non-fatal)`);
         } else {
-          console.warn(`[ContextClaw] WS error: ${e.message}`);
+          console.warn(`[ContextClaw] WS error: ${_redactPaths(e)}`);
         }
         try { this.wss?.close(); } catch (_) {}
         this.wss = null;
@@ -235,7 +284,7 @@ class ContextClawEngine {
         ws.on('close', () => this.clients.delete(ws));
       });
     } catch (e) {
-      console.warn(`[ContextClaw] WS init failed: ${e.message} — telemetry disabled (non-fatal)`);
+      console.warn(`[ContextClaw] WS init failed: ${_redactPaths(e)} — telemetry disabled (non-fatal)`);
       this.wss = null;
     }
   }
@@ -441,7 +490,7 @@ class ContextClawEngine {
         }),
       };
     } catch (e) {
-      console.error('[ContextClaw] assemble error (falling back to pass-through):', e.message);
+      console.error('[ContextClaw] assemble error (falling back to pass-through):', _redactPaths(e));
       // Return original messages unmodified — the gateway's own pipeline will handle them.
       // This ensures ContextClaw can NEVER crash the gateway.
       return {

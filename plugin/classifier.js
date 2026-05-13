@@ -67,12 +67,22 @@ const CMD_PATTERNS = [
   /^(?:Session|Command)\s.*(?:pid|exit)/i,
 ];
 
+// ReDoS-resistant: bounded quantifiers on every variable-length segment.
+// Original `^{\s*"[\w.]+"\s*:/` is exponential under crafted input
+// (e.g. `{` + 100k spaces + `"` with no closing colon). The bounded forms
+// below cap each repeat so worst-case match time is linear in input length.
 const CONFIG_PATTERNS = [
-  /^{\s*"[\w.]+"\s*:/,                          // JSON config
-  /^[\w.]+:\s+/m,                               // YAML-style
-  /^\[[\w.]+\]\s*$/m,                           // TOML section
+  /^\{[ \t]{0,4}"[\w.]{1,128}"[ \t]{0,4}:/,    // JSON config (bounded)
+  /^[\w.]{1,128}:[ \t]{1,4}/m,                  // YAML-style (bounded)
+  /^\[[\w.]{1,128}\][ \t]{0,4}$/m,              // TOML section (bounded)
   /configSchema|pluginApi|minGatewayVersion/,
 ];
+
+// Pre-match guard: config-dump-class detection refuses to even attempt
+// regex matching against payloads above this size. Above the threshold,
+// the input is almost certainly a config-dump regardless of regex shape,
+// and refusing to scan it eliminates ReDoS exposure entirely.
+const CONFIG_PATTERN_MAX_INPUT = 5000;
 
 const ERROR_PATTERNS = [
   /Error:|TypeError:|ReferenceError:|SyntaxError:/,
@@ -141,10 +151,12 @@ export function classify(msg) {
     }
   }
 
-  // Config dumps
-  if (size > 500 && CONFIG_PATTERNS.some(p => p.test(content))) {
+  // Config dumps — bounded input length to defeat ReDoS on adversarial payloads.
+  // Above CONFIG_PATTERN_MAX_INPUT we skip the regex pass entirely and let
+  // downstream classification (file/cmd/generic) handle it.
+  if (size > 500 && size <= CONFIG_PATTERN_MAX_INPUT && CONFIG_PATTERNS.some(p => p.test(content))) {
     const lines = content.split('\n').filter(l => l.trim());
-    const configLines = lines.filter(l => /^\s*"?\w[\w.-]*"?\s*[:=]/.test(l)).length;
+    const configLines = lines.filter(l => /^[ \t]*"?[\w][\w.-]{0,128}"?[ \t]{0,4}[:=]/.test(l)).length;
     if (configLines / lines.length > 0.25) return TYPES.CONFIG_DUMP;
   }
 
